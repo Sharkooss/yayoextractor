@@ -6,8 +6,12 @@ services:
     env_file:
       - .env
     depends_on:
-      - potprovider
-      - warp
+      potprovider:
+        condition: service_started
+      # L'app attend que le tunnel WARP soit monté : démarré trop tôt, le
+      # SOCKS laisse sortir le trafic en direct et YouTube bloque l'IP du VPS.
+      warp:
+        condition: service_healthy
     volumes:
       - downloads:/data
     networks:
