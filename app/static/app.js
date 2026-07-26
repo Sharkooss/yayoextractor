@@ -23,7 +23,7 @@ $("search-form").addEventListener("submit", async (event) => {
   }
   const btn = $("search-btn");
   btn.disabled = true;
-  btn.textContent = "⏳ Recherche…";
+  $("search-btn-label").textContent = "Recherche…";
   hint.hidden = false;
   hint.classList.remove("error");
   hint.textContent = "On cherche sur YouTube…";
@@ -41,7 +41,7 @@ $("search-form").addEventListener("submit", async (event) => {
     hint.hidden = false;
   } finally {
     btn.disabled = false;
-    btn.textContent = "🔍 Rechercher";
+    $("search-btn-label").textContent = "Rechercher";
   }
 });
 
@@ -61,12 +61,17 @@ function renderResults(items) {
     const hint = $("search-hint");
     hint.textContent = "Aucun résultat… essaie avec d'autres mots.";
     hint.hidden = false;
+    $("results-placeholder").hidden = false;
     return;
   }
+  $("results-placeholder").hidden = true;
   for (const item of items) {
-    const card = document.createElement("button");
-    card.type = "button";
+    // Une div plutôt qu'un <button> : Chromium calcule mal la hauteur
+    // intrinsèque des boutons conteneurs flex dans une grille (cartes écrasées).
+    const card = document.createElement("div");
     card.className = "result";
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
     card.innerHTML = `
       <div class="thumb-wrap">
         <img src="${item.thumbnail}" alt="" loading="lazy">
@@ -79,6 +84,12 @@ function renderResults(items) {
     card.querySelector(".result-title").textContent = item.title;
     card.querySelector(".result-channel").textContent = item.channel;
     card.addEventListener("click", () => selectResult(card, item));
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectResult(card, item);
+      }
+    });
     results.appendChild(card);
   }
   results.hidden = false;
@@ -191,22 +202,22 @@ async function pollJob() {
   if (job.status === "queued" || job.status === "fetching") {
     ring.classList.add("indeterminate");
     $("percent").textContent = "…";
-    $("status-text").textContent = "On va chercher ta vidéo… 🎬";
+    $("status-text").textContent = "On va chercher ta vidéo…";
   } else if (job.status === "retrying") {
     ring.classList.add("indeterminate");
     $("percent").textContent = "…";
-    $("status-text").textContent = "YouTube fait des siennes, on réessaie… 🔄";
+    $("status-text").textContent = "YouTube fait des siennes, on réessaie…";
   } else if (job.status === "downloading") {
     ring.classList.remove("indeterminate");
     setRing(job.progress || 0);
     $("percent").textContent = `${Math.floor(job.progress || 0)}%`;
-    $("status-text").textContent = "Téléchargement en cours… 🚀";
+    $("status-text").textContent = "Téléchargement en cours…";
   } else if (job.status === "converting") {
     ring.classList.remove("indeterminate");
     setRing(100);
     $("percent").textContent = "100%";
     $("status-text").textContent =
-      job.format === "mp3" ? "Transformation en musique MP3… 🎶" : "Préparation de la vidéo… 🎬";
+      job.format === "mp3" ? "Transformation en musique MP3…" : "Préparation de la vidéo…";
   } else if (job.status === "done") {
     clearInterval(pollTimer);
     pollTimer = null;
