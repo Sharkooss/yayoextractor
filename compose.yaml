@@ -1,0 +1,26 @@
+services:
+  app:
+    build: .
+    container_name: yayoextractor
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - downloads:/data
+    networks:
+      - default
+      - web
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=web
+      - traefik.http.routers.yayoextractor.rule=Host(`${APP_DOMAIN}`)
+      - traefik.http.routers.yayoextractor.entrypoints=websecure
+      - traefik.http.routers.yayoextractor.tls.certresolver=letsencrypt
+      - traefik.http.services.yayoextractor.loadbalancer.server.port=8000
+
+volumes:
+  downloads:
+
+networks:
+  web:
+    external: true

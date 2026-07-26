@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yayo Extractor — Ta musique YouTube en MP3</title>
+  <meta name="description" content="Cherche une chanson sur YouTube et récupère-la en MP3, tout simplement.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎵</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="blob blob-1" aria-hidden="true"></div>
+  <div class="blob blob-2" aria-hidden="true"></div>
+
+  <header>
+    <h1><span class="logo">🎵</span> Yayo&nbsp;Extractor</h1>
+    <p class="tagline">Ta musique YouTube en MP3, en deux clics.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2><span class="step">1</span> Cherche ta chanson</h2>
+      <form id="search-form" class="search-row">
+        <input id="search-input" type="search" placeholder="Ex : Charles Aznavour — La Bohème"
+               autocomplete="off" enterkeyhint="search">
+        <button type="submit" class="btn btn-primary" id="search-btn">🔍 Rechercher</button>
+      </form>
+      <p class="hint" id="search-hint" hidden></p>
+      <div id="results" class="results" hidden></div>
+    </section>
+
+    <section class="card" id="download-card">
+      <h2><span class="step">2</span> Vérifie et lance</h2>
+      <label class="field-label" for="url-input">
+        Le lien de la vidéo <small>(il se remplit tout seul quand tu choisis, ou colle-le ici)</small>
+      </label>
+      <input id="url-input" type="url" placeholder="https://www.youtube.com/watch?v=…"
+             autocomplete="off" spellcheck="false">
+      <div class="format-row">
+        <button type="button" class="format-pill selected" data-format="mp3">
+          🎵 Musique <small>fichier MP3</small>
+        </button>
+        <button type="button" class="format-pill" data-format="mp4">
+          🎬 Vidéo <small>fichier MP4</small>
+        </button>
+      </div>
+      <button type="button" class="btn btn-go" id="go-btn">🚀 C'est parti !</button>
+      <p class="hint error" id="inline-error" hidden></p>
+    </section>
+  </main>
+
+  <footer>Fait avec ❤️ pour Yayo</footer>
+
+  <div id="overlay" class="overlay" hidden>
+    <div class="overlay-card">
+
+      <div class="stage" id="stage-progress">
+        <div class="vinyl-wrap">
+          <svg class="ring" id="ring" viewBox="0 0 260 260" aria-hidden="true">
+            <circle class="ring-bg" cx="130" cy="130" r="120"/>
+            <circle class="ring-fg" id="ring-fg" cx="130" cy="130" r="120"/>
+          </svg>
+          <div class="vinyl">
+            <div class="vinyl-label" id="vinyl-label"></div>
+          </div>
+        </div>
+        <div class="percent" id="percent">…</div>
+        <div class="status-text" id="status-text">Préparation…</div>
+        <div class="job-title" id="job-title"></div>
+        <div class="equalizer" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+
+      <div class="stage" id="stage-done" hidden>
+        <div class="big-emoji check">✅</div>
+        <div class="done-title">C'est prêt !</div>
+        <div class="job-title" id="done-filename"></div>
+        <p class="done-hint">Le fichier se télécharge tout seul.<br>S'il ne se passe rien, appuie sur le bouton :</p>
+        <button type="button" class="btn btn-go" id="save-btn">💾 Enregistrer le fichier</button>
+        <button type="button" class="btn btn-ghost" id="again-btn">🔁 Convertir autre chose</button>
+      </div>
+
+      <div class="stage" id="stage-error" hidden>
+        <div class="big-emoji">😕</div>
+        <div class="done-title">Oups…</div>
+        <p class="done-hint" id="error-text"></p>
+        <button type="button" class="btn btn-go" id="retry-btn">🔁 Réessayer</button>
+        <button type="button" class="btn btn-ghost" id="close-btn">Fermer</button>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
