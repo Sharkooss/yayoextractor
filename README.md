@@ -29,6 +29,9 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
   - `JOB_TTL_MINUTES` — durée de conservation des fichiers convertis (défaut 60).
 - **Volume** : `downloads` monté sur `/data` (fichiers temporaires de conversion, nettoyés automatiquement).
 - **Healthcheck** : `GET /api/health` (intégré au Dockerfile).
+- **Sidecar `potprovider`** : génère les PO tokens exigés par YouTube pour les IP
+  de serveur ([bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)).
+  Sans lui, YouTube répond « Sign in to confirm you're not a bot ». Réseau interne uniquement.
 
 ## CI/CD
 

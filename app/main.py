@@ -24,6 +24,7 @@ JOBS_DIR = DATA_DIR / "jobs"
 # Optionnel : un cookies.txt exporté du navigateur, monté dans /data,
 # si YouTube se met à bloquer l'IP du serveur.
 COOKIES_FILE = DATA_DIR / "cookies.txt"
+POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
 MAX_DURATION_S = int(os.environ.get("MAX_DURATION_MINUTES", "180")) * 60
 JOB_TTL_S = int(os.environ.get("JOB_TTL_MINUTES", "60")) * 60
 SEARCH_RESULTS = 12
@@ -42,6 +43,8 @@ class JobError(Exception):
 
 def base_ydl_opts() -> dict:
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
+    if POT_PROVIDER_URL:
+        opts["extractor_args"] = {"youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_URL]}}
     if COOKIES_FILE.is_file():
         opts["cookiefile"] = str(COOKIES_FILE)
     return opts

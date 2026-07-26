@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    depends_on:
+      - potprovider
     volumes:
       - downloads:/data
     networks:
@@ -17,6 +19,15 @@ services:
       - traefik.http.routers.yayoextractor.entrypoints=websecure
       - traefik.http.routers.yayoextractor.tls.certresolver=letsencrypt
       - traefik.http.services.yayoextractor.loadbalancer.server.port=8000
+
+  # Fournit les PO tokens que YouTube exige des IP de serveur,
+  # sans cookies ni compte Google. Réseau interne uniquement.
+  potprovider:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    container_name: yayoextractor-potprovider
+    restart: unless-stopped
+    networks:
+      - default
 
 volumes:
   downloads:
