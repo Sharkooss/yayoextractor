@@ -7,6 +7,7 @@ services:
       - .env
     depends_on:
       - potprovider
+      - warp
     volumes:
       - downloads:/data
     networks:
@@ -29,8 +30,26 @@ services:
     networks:
       - default
 
+  # Proxy Cloudflare WARP : YouTube bloque les IP de datacenter (anti-bot),
+  # tout le trafic yt-dlp sort par ce tunnel. Réseau interne uniquement.
+  warp:
+    image: caomingjun/warp:latest
+    container_name: yayoextractor-warp
+    restart: unless-stopped
+    devices:
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - WARP_SLEEP=3
+    volumes:
+      - warp_data:/var/lib/cloudflare-warp
+    networks:
+      - default
+
 volumes:
   downloads:
+  warp_data:
 
 networks:
   web:

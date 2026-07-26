@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+# Runtime JS pour les défis JavaScript de YouTube (yt-dlp-ejs, deno >= 2.3)
+COPY --from=denoland/deno:bin-2.9.4 /deno /usr/local/bin/deno
+
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1

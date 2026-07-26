@@ -29,9 +29,12 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
   - `JOB_TTL_MINUTES` — durée de conservation des fichiers convertis (défaut 60).
 - **Volume** : `downloads` monté sur `/data` (fichiers temporaires de conversion, nettoyés automatiquement).
 - **Healthcheck** : `GET /api/health` (intégré au Dockerfile).
-- **Sidecar `potprovider`** : génère les PO tokens exigés par YouTube pour les IP
-  de serveur ([bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)).
-  Sans lui, YouTube répond « Sign in to confirm you're not a bot ». Réseau interne uniquement.
+- **Sidecar `warp`** : proxy Cloudflare WARP ([caomingjun/warp](https://hub.docker.com/r/caomingjun/warp)).
+  YouTube bloque les IP de datacenter (« Sign in to confirm you're not a bot ») ;
+  tout le trafic yt-dlp sort par ce tunnel (`YTDLP_PROXY`). Réseau interne uniquement.
+- **Sidecar `potprovider`** : génère les PO tokens exigés par YouTube
+  ([bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)).
+- **Deno + yt-dlp-ejs** (dans l'image) : résolvent les défis JavaScript de YouTube.
 
 ## CI/CD
 
