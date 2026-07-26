@@ -9,6 +9,33 @@ let currentJobId = null;
 let pollTimer = null;
 let autoDownloadDone = false;
 
+/* ---------- Thème clair / sombre ---------- */
+
+// Le thème initial est déjà posé par le script inline du <head>.
+const themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function applyTheme(theme, persist) {
+  document.documentElement.dataset.theme = theme;
+  $("theme-label").textContent = theme === "dark" ? "Mode clair" : "Mode sombre";
+  if (persist) {
+    try { localStorage.setItem("yayo-theme", theme); } catch { /* navigation privée */ }
+  }
+}
+
+applyTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light", false);
+
+$("theme-toggle").addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme(next, true);
+});
+
+// Suit le thème du système tant que l'utilisateur n'a pas choisi lui-même.
+themeQuery.addEventListener("change", (event) => {
+  let chosen = null;
+  try { chosen = localStorage.getItem("yayo-theme"); } catch { /* ignore */ }
+  if (!chosen) applyTheme(event.matches ? "dark" : "light", false);
+});
+
 /* ---------- Recherche ---------- */
 
 $("search-form").addEventListener("submit", async (event) => {
