@@ -192,6 +192,10 @@ async function pollJob() {
     ring.classList.add("indeterminate");
     $("percent").textContent = "…";
     $("status-text").textContent = "On va chercher ta vidéo… 🎬";
+  } else if (job.status === "retrying") {
+    ring.classList.add("indeterminate");
+    $("percent").textContent = "…";
+    $("status-text").textContent = "YouTube fait des siennes, on réessaie… 🔄";
   } else if (job.status === "downloading") {
     ring.classList.remove("indeterminate");
     setRing(job.progress || 0);

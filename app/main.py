@@ -30,6 +30,7 @@ YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "").strip()
 MAX_DURATION_S = int(os.environ.get("MAX_DURATION_MINUTES", "180")) * 60
 JOB_TTL_S = int(os.environ.get("JOB_TTL_MINUTES", "60")) * 60
 SEARCH_RESULTS = 12
+DOWNLOAD_ATTEMPTS = 3
 
 YOUTUBE_URL_RE = re.compile(
     r"^(https?://)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE
@@ -65,59 +66,76 @@ def public_job(job: dict) -> dict:
     return {k: job[k] for k in ("id", "status", "progress", "title", "thumbnail", "filename", "error", "format")}
 
 
+def _download(job_id: str, url: str, fmt: str, job_dir: Path) -> None:
+    shutil.rmtree(job_dir, ignore_errors=True)
+    job_dir.mkdir(parents=True, exist_ok=True)
+    set_job(job_id, status="fetching")
+
+    with yt_dlp.YoutubeDL(base_ydl_opts()) as ydl:
+        meta = ydl.extract_info(url, download=False)
+    duration = meta.get("duration") or 0
+    if MAX_DURATION_S and duration > MAX_DURATION_S:
+        raise JobError(f"Cette vidéo est trop longue (maximum {MAX_DURATION_S // 60} minutes).")
+    set_job(job_id, title=meta.get("title"), thumbnail=meta.get("thumbnail"), status="downloading")
+
+    def hook(d: dict) -> None:
+        if d["status"] == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate")
+            updates = {"status": "downloading"}
+            if total:
+                updates["progress"] = min(round(d.get("downloaded_bytes", 0) / total * 100, 1), 100.0)
+            set_job(job_id, **updates)
+        elif d["status"] == "finished":
+            set_job(job_id, status="converting", progress=100.0)
+
+    opts = base_ydl_opts() | {
+        "outtmpl": str(job_dir / "%(title).180B.%(ext)s"),
+        "progress_hooks": [hook],
+    }
+    if fmt == "mp3":
+        opts |= {
+            "format": "bestaudio/best",
+            "writethumbnail": True,
+            "postprocessors": [
+                {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
+                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
+                {"key": "FFmpegMetadata"},
+                {"key": "EmbedThumbnail"},
+            ],
+        }
+    else:
+        opts |= {
+            "format": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+            "merge_output_format": "mp4",
+        }
+
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([url])
+
+    wanted = ".mp3" if fmt == "mp3" else ".mp4"
+    files = sorted(p for p in job_dir.iterdir() if p.suffix.lower() == wanted)
+    if not files:
+        raise JobError("Le fichier converti est introuvable, réessaie.")
+    set_job(job_id, status="done", progress=100.0, file=str(files[0]), filename=files[0].name)
+    log.info("job %s terminé : %s", job_id, files[0].name)
+
+
 def run_job(job_id: str, url: str, fmt: str) -> None:
     job_dir = JOBS_DIR / job_id
     try:
-        job_dir.mkdir(parents=True, exist_ok=True)
-        set_job(job_id, status="fetching")
-
-        with yt_dlp.YoutubeDL(base_ydl_opts()) as ydl:
-            meta = ydl.extract_info(url, download=False)
-        duration = meta.get("duration") or 0
-        if MAX_DURATION_S and duration > MAX_DURATION_S:
-            raise JobError(f"Cette vidéo est trop longue (maximum {MAX_DURATION_S // 60} minutes).")
-        set_job(job_id, title=meta.get("title"), thumbnail=meta.get("thumbnail"), status="downloading")
-
-        def hook(d: dict) -> None:
-            if d["status"] == "downloading":
-                total = d.get("total_bytes") or d.get("total_bytes_estimate")
-                updates = {"status": "downloading"}
-                if total:
-                    updates["progress"] = min(round(d.get("downloaded_bytes", 0) / total * 100, 1), 100.0)
-                set_job(job_id, **updates)
-            elif d["status"] == "finished":
-                set_job(job_id, status="converting", progress=100.0)
-
-        opts = base_ydl_opts() | {
-            "outtmpl": str(job_dir / "%(title).180B.%(ext)s"),
-            "progress_hooks": [hook],
-        }
-        if fmt == "mp3":
-            opts |= {
-                "format": "bestaudio/best",
-                "writethumbnail": True,
-                "postprocessors": [
-                    {"key": "FFmpegThumbnailsConvertor", "format": "jpg"},
-                    {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
-                    {"key": "FFmpegMetadata"},
-                    {"key": "EmbedThumbnail"},
-                ],
-            }
-        else:
-            opts |= {
-                "format": "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-                "merge_output_format": "mp4",
-            }
-
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            ydl.download([url])
-
-        wanted = ".mp3" if fmt == "mp3" else ".mp4"
-        files = sorted(p for p in job_dir.iterdir() if p.suffix.lower() == wanted)
-        if not files:
-            raise JobError("Le fichier converti est introuvable, réessaie.")
-        set_job(job_id, status="done", progress=100.0, file=str(files[0]), filename=files[0].name)
-        log.info("job %s terminé : %s", job_id, files[0].name)
+        # Même via WARP, YouTube refuse parfois une requête au hasard (~20 %) :
+        # on retente la totalité du téléchargement avant de déclarer l'échec.
+        for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
+            try:
+                _download(job_id, url, fmt, job_dir)
+                return
+            except yt_dlp.utils.DownloadError as exc:
+                if attempt == DOWNLOAD_ATTEMPTS:
+                    raise
+                log.warning("job %s : tentative %d/%d échouée, on réessaie (%s)",
+                            job_id, attempt, DOWNLOAD_ATTEMPTS, exc)
+                set_job(job_id, status="retrying", progress=0.0)
+                time.sleep(2 * attempt)
     except JobError as exc:
         set_job(job_id, status="error", error=str(exc))
         shutil.rmtree(job_dir, ignore_errors=True)
