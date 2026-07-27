@@ -31,7 +31,9 @@ POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
 # Proxy sortant pour yt-dlp (ex. WARP) : YouTube bloque les IP de datacenter.
 YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "").strip()
 MAX_DURATION_S = int(os.environ.get("MAX_DURATION_MINUTES", "180")) * 60
-JOB_TTL_S = int(os.environ.get("JOB_TTL_MINUTES", "60")) * 60
+JOB_TTL_S = int(os.environ.get("JOB_TTL_MINUTES", "15")) * 60
+# On vérifie plusieurs fois par TTL, sinon un TTL court n'est pas tenu.
+CLEANUP_INTERVAL_S = max(60, min(300, JOB_TTL_S // 5))
 # Notification Discord à chaque conversion réussie (vide = désactivé).
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 SEARCH_RESULTS = 12
@@ -234,7 +236,7 @@ def run_job(job_id: str, url: str, fmt: str) -> None:
 
 def cleanup_loop() -> None:
     while True:
-        time.sleep(300)
+        time.sleep(CLEANUP_INTERVAL_S)
         cutoff = time.time() - JOB_TTL_S
         with jobs_lock:
             stale = [job_id for job_id, job in jobs.items() if job["created_at"] < cutoff]

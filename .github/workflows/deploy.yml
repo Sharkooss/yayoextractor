@@ -26,3 +26,6 @@ jobs:
             git reset --hard origin/main
             docker compose up -d --build
             docker image prune -f
+            # Sans plafond, le cache de build gonfle a chaque deploiement
+            # (41 Go accumules avant d'etre reclames le 27/07/2026).
+            docker builder prune -f --max-used-space 5GB

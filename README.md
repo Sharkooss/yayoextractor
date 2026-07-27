@@ -26,7 +26,9 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
 - **Variables** (`.env`) :
   - `APP_DOMAIN` — obligatoire, domaine public.
   - `MAX_DURATION_MINUTES` — durée max des vidéos acceptées (défaut 180).
-  - `JOB_TTL_MINUTES` — durée de conservation des fichiers convertis (défaut 60).
+  - `JOB_TTL_MINUTES` — durée de conservation des fichiers convertis (défaut 15).
+    Un fil de nettoyage supprime les fichiers expirés, et tout `/data/jobs` est
+    vidé au démarrage : rien ne s'accumule sur le disque du serveur.
   - `DISCORD_WEBHOOK_URL` — facultatif : notification Discord à chaque conversion
     réussie (titre, chaîne, durée, taille, temps de traitement). Vide = désactivé.
     À renseigner uniquement dans le `.env` du serveur, jamais dans le dépôt.
