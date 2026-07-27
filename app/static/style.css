@@ -568,6 +568,114 @@ footer .heart { color: var(--heart); fill: currentColor; stroke: none; }
   font-weight: 700;
   margin-top: 8px;
 }
+
+/* ---------- Lecteur : écouter avant de télécharger ---------- */
+
+.player {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 14px 18px 14px 14px;
+  background: var(--field);
+  border: 2px solid var(--line);
+  border-radius: 22px;
+  text-align: left;
+}
+.player[hidden] { display: none; }
+
+.play-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent-grad);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(255, 107, 53, 0.45);
+  transition: transform 0.15s, box-shadow 0.15s;
+  /* Pulsation tant qu'on n'a pas lancé la lecture : le bouton doit sauter aux yeux. */
+  animation: play-pulse 2s ease-in-out infinite;
+}
+.play-btn:hover { transform: scale(1.06); box-shadow: 0 12px 28px rgba(255, 107, 53, 0.55); }
+.play-btn:active { transform: scale(0.95); }
+.play-btn:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+.play-btn .icon { width: 34px; height: 34px; stroke-width: 1.5; }
+.play-btn .icon-pause { display: none; }
+
+/* Une fois lancée, la pulsation devient inutile et distrayante. */
+.player.playing .play-btn,
+.player.started .play-btn { animation: none; }
+.player.playing .play-btn .icon-play { display: none; }
+.player.playing .play-btn .icon-pause { display: block; }
+
+@keyframes play-pulse {
+  0%, 100% { box-shadow: 0 8px 22px rgba(255, 107, 53, 0.45), 0 0 0 0 rgba(255, 107, 53, 0.5); }
+  70% { box-shadow: 0 8px 22px rgba(255, 107, 53, 0.45), 0 0 0 16px rgba(255, 107, 53, 0); }
+}
+
+.player-body { flex: 1 1 auto; min-width: 0; }
+
+.player-hint {
+  font-family: "Fredoka", sans-serif;
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.seek {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--line);
+  cursor: pointer;
+  outline: none;
+}
+.seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid var(--card);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+.seek::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 3px solid var(--card);
+  cursor: pointer;
+}
+.seek:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+
+.times {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  margin-top: 6px;
+}
+
+.video-player {
+  width: 100%;
+  margin-top: 18px;
+  border-radius: 18px;
+  background: #000;
+  display: block;
+  max-height: 40vh;
+}
+.video-player[hidden] { display: none; }
 .done-hint { color: var(--ink-soft); font-weight: 700; margin: 10px 0 0; }
 
 #done-filename { margin-top: 6px; }

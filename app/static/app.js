@@ -7,7 +7,7 @@ const RING_CIRCUMFERENCE = 754; // 2 * PI * r(120), en unités du viewBox
 let currentFormat = "mp3";
 let currentJobId = null;
 let pollTimer = null;
-let autoDownloadDone = false;
+let seeking = false;
 
 /* ---------- Thème clair / sombre ---------- */
 
@@ -73,7 +73,8 @@ $("search-form").addEventListener("submit", async (event) => {
 });
 
 function formatDuration(seconds) {
-  if (!seconds && seconds !== 0) return "";
+  // Un flux en cours de chargement annonce parfois une durée infinie ou NaN.
+  if (seconds === null || seconds === undefined || !isFinite(seconds) || seconds < 0) return "";
   const s = Math.round(seconds);
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);
@@ -170,7 +171,6 @@ async function startJob() {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Impossible de lancer la conversion.");
     currentJobId = data.id;
-    autoDownloadDone = false;
     openOverlay();
     pollTimer = setInterval(pollJob, 600);
   } catch (err) {
@@ -197,6 +197,7 @@ function closeOverlay() {
   clearInterval(pollTimer);
   pollTimer = null;
   currentJobId = null;
+  stopPlayer();
   $("overlay").hidden = true;
   document.body.style.overflow = "";
 }
@@ -249,12 +250,9 @@ async function pollJob() {
     clearInterval(pollTimer);
     pollTimer = null;
     $("done-filename").textContent = job.filename || "";
+    setupPlayer(job);
     showStage("stage-done");
     launchConfetti();
-    if (!autoDownloadDone) {
-      autoDownloadDone = true;
-      triggerDownload();
-    }
   } else if (job.status === "error") {
     clearInterval(pollTimer);
     pollTimer = null;
@@ -288,6 +286,101 @@ function launchConfetti() {
     setTimeout(() => piece.remove(), 4000);
   }
 }
+
+/* ---------- Lecteur : écouter avant de télécharger ---------- */
+
+function setupPlayer(job) {
+  const src = `/api/jobs/${currentJobId}/stream`;
+  const player = $("player");
+  const video = $("video-player");
+  const audio = $("audio-player");
+
+  player.classList.remove("playing", "started");
+  $("player-hint").textContent = "Appuie pour écouter";
+  $("seek").value = 0;
+  $("time-current").textContent = "0:00";
+  $("time-total").textContent = "0:00";
+
+  if (job.format === "mp4") {
+    // Une vidéo a besoin d'une surface : les contrôles natifs font le travail.
+    player.hidden = true;
+    video.hidden = false;
+    video.src = src;
+  } else {
+    video.hidden = true;
+    video.removeAttribute("src");
+    player.hidden = false;
+    audio.src = src;
+  }
+}
+
+function stopPlayer() {
+  const audio = $("audio-player");
+  const video = $("video-player");
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  $("player").classList.remove("playing", "started");
+}
+
+const audioEl = $("audio-player");
+
+$("play-btn").addEventListener("click", () => {
+  if (audioEl.paused) {
+    audioEl.play().catch(() => {
+      $("player-hint").textContent = "Lecture impossible ici, mais le téléchargement fonctionne.";
+    });
+  } else {
+    audioEl.pause();
+  }
+});
+
+audioEl.addEventListener("play", () => {
+  $("player").classList.add("playing", "started");
+  $("play-btn").setAttribute("aria-label", "Mettre en pause");
+  $("player-hint").textContent = "Lecture en cours…";
+});
+
+audioEl.addEventListener("pause", () => {
+  $("player").classList.remove("playing");
+  $("play-btn").setAttribute("aria-label", "Écouter la musique");
+  $("player-hint").textContent = "En pause";
+});
+
+audioEl.addEventListener("ended", () => {
+  $("player").classList.remove("playing");
+  $("player-hint").textContent = "Terminé — tu peux le télécharger";
+  $("seek").value = 0;
+  $("time-current").textContent = "0:00";
+});
+
+audioEl.addEventListener("loadedmetadata", () => {
+  $("time-total").textContent = formatDuration(audioEl.duration) || "0:00";
+});
+
+audioEl.addEventListener("timeupdate", () => {
+  if (seeking || !isFinite(audioEl.duration)) return;
+  $("seek").value = String((audioEl.currentTime / audioEl.duration) * 1000);
+  $("time-current").textContent = formatDuration(audioEl.currentTime);
+});
+
+// Pendant le glissement on n'écrase pas la position choisie par l'utilisateur.
+$("seek").addEventListener("input", () => {
+  seeking = true;
+  if (isFinite(audioEl.duration)) {
+    $("time-current").textContent = formatDuration(($("seek").value / 1000) * audioEl.duration);
+  }
+});
+
+$("seek").addEventListener("change", () => {
+  if (isFinite(audioEl.duration)) {
+    audioEl.currentTime = ($("seek").value / 1000) * audioEl.duration;
+  }
+  seeking = false;
+});
 
 /* ---------- Boutons de l'overlay ---------- */
 

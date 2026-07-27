@@ -1,17 +1,20 @@
 """Yayo Extractor — YouTube vers MP3/MP4, pensé pour Yayo."""
 
+import json
 import logging
 import os
 import re
 import shutil
 import threading
 import time
+import urllib.error
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import yt_dlp
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -29,6 +32,8 @@ POT_PROVIDER_URL = os.environ.get("POT_PROVIDER_URL", "").strip()
 YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "").strip()
 MAX_DURATION_S = int(os.environ.get("MAX_DURATION_MINUTES", "180")) * 60
 JOB_TTL_S = int(os.environ.get("JOB_TTL_MINUTES", "60")) * 60
+# Notification Discord à chaque conversion réussie (vide = désactivé).
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 SEARCH_RESULTS = 12
 DOWNLOAD_ATTEMPTS = 3
 
@@ -66,6 +71,65 @@ def public_job(job: dict) -> dict:
     return {k: job[k] for k in ("id", "status", "progress", "title", "thumbnail", "filename", "error", "format")}
 
 
+def human_duration(seconds: float | None) -> str:
+    if not seconds:
+        return "—"
+    seconds = int(seconds)
+    h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def human_size(num_bytes: int | None) -> str:
+    if not num_bytes:
+        return "—"
+    mb = num_bytes / (1024 * 1024)
+    return f"{mb:.1f} Mo" if mb >= 1 else f"{num_bytes / 1024:.0f} Ko"
+
+
+def notify_discord(job: dict) -> None:
+    """Prévient Discord qu'une conversion est terminée. Jamais bloquant."""
+    if not DISCORD_WEBHOOK_URL:
+        return
+    elapsed = time.time() - job["created_at"]
+    fields = [
+        {"name": "Format", "value": job["format"].upper(), "inline": True},
+        {"name": "Durée", "value": human_duration(job.get("duration")), "inline": True},
+        {"name": "Taille", "value": human_size(job.get("filesize")), "inline": True},
+        {"name": "Chaîne", "value": job.get("channel") or "—", "inline": True},
+        {"name": "Traitement", "value": f"{elapsed:.0f} s", "inline": True},
+        {"name": "Tentatives", "value": str(job.get("attempts", 1)), "inline": True},
+        {"name": "Fichier", "value": f"`{job['filename']}`", "inline": False},
+    ]
+    if job.get("client_ip"):
+        fields.append({"name": "Depuis", "value": job["client_ip"], "inline": True})
+    payload = {
+        "username": "Yayo Extractor",
+        "embeds": [{
+            "title": (job.get("title") or "Sans titre")[:250],
+            "url": job.get("source_url"),
+            "description": "Nouvelle musique téléchargée",
+            "color": 0xFF6B35,
+            "thumbnail": {"url": job["thumbnail"]} if job.get("thumbnail") else None,
+            "fields": fields,
+            "footer": {"text": f"Yayo Extractor • job {job['id'][:8]}"},
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime()) + "Z",
+        }],
+    }
+    request = urllib.request.Request(
+        DISCORD_WEBHOOK_URL,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": "YayoExtractor/1.0"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as resp:
+            log.info("job %s : Discord notifié (HTTP %s)", job["id"], resp.status)
+    except urllib.error.HTTPError as exc:
+        log.warning("job %s : Discord a refusé la notification (HTTP %s)", job["id"], exc.code)
+    except Exception as exc:
+        log.warning("job %s : notification Discord impossible (%s)", job["id"], exc)
+
+
 def _download(job_id: str, url: str, fmt: str, job_dir: Path) -> None:
     shutil.rmtree(job_dir, ignore_errors=True)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -76,7 +140,15 @@ def _download(job_id: str, url: str, fmt: str, job_dir: Path) -> None:
     duration = meta.get("duration") or 0
     if MAX_DURATION_S and duration > MAX_DURATION_S:
         raise JobError(f"Cette vidéo est trop longue (maximum {MAX_DURATION_S // 60} minutes).")
-    set_job(job_id, title=meta.get("title"), thumbnail=meta.get("thumbnail"), status="downloading")
+    set_job(
+        job_id,
+        title=meta.get("title"),
+        thumbnail=meta.get("thumbnail"),
+        duration=duration,
+        channel=meta.get("channel") or meta.get("uploader"),
+        source_url=meta.get("webpage_url") or url,
+        status="downloading",
+    )
 
     def hook(d: dict) -> None:
         if d["status"] == "downloading":
@@ -116,8 +188,18 @@ def _download(job_id: str, url: str, fmt: str, job_dir: Path) -> None:
     files = sorted(p for p in job_dir.iterdir() if p.suffix.lower() == wanted)
     if not files:
         raise JobError("Le fichier converti est introuvable, réessaie.")
-    set_job(job_id, status="done", progress=100.0, file=str(files[0]), filename=files[0].name)
+    set_job(
+        job_id,
+        status="done",
+        progress=100.0,
+        file=str(files[0]),
+        filename=files[0].name,
+        filesize=files[0].stat().st_size,
+    )
     log.info("job %s terminé : %s", job_id, files[0].name)
+    with jobs_lock:
+        snapshot = dict(jobs[job_id])
+    notify_discord(snapshot)
 
 
 def run_job(job_id: str, url: str, fmt: str) -> None:
@@ -127,6 +209,7 @@ def run_job(job_id: str, url: str, fmt: str) -> None:
         # on retente la totalité du téléchargement avant de déclarer l'échec.
         for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
             try:
+                set_job(job_id, attempts=attempt)
                 _download(job_id, url, fmt, job_dir)
                 return
             except yt_dlp.utils.DownloadError as exc:
@@ -214,7 +297,7 @@ class JobRequest(BaseModel):
 
 
 @app.post("/api/jobs")
-def create_job(req: JobRequest):
+def create_job(req: JobRequest, request: Request):
     url = req.url.strip()
     fmt = req.format.lower().strip()
     if not YOUTUBE_URL_RE.match(url):
@@ -222,6 +305,9 @@ def create_job(req: JobRequest):
     if fmt not in ("mp3", "mp4"):
         raise HTTPException(status_code=400, detail="Format inconnu (mp3 ou mp4 uniquement).")
     job_id = uuid.uuid4().hex
+    # Traefik est en frontal : l'IP réelle est dans X-Forwarded-For.
+    forwarded = request.headers.get("x-forwarded-for", "")
+    client_ip = forwarded.split(",")[0].strip() or (request.client.host if request.client else "")
     with jobs_lock:
         jobs[job_id] = {
             "id": job_id,
@@ -233,6 +319,12 @@ def create_job(req: JobRequest):
             "error": None,
             "format": fmt,
             "file": None,
+            "duration": None,
+            "channel": None,
+            "filesize": None,
+            "source_url": url,
+            "client_ip": client_ip,
+            "attempts": 0,
             "created_at": time.time(),
         }
     threading.Thread(target=run_job, args=(job_id, url, fmt), daemon=True).start()
@@ -248,15 +340,29 @@ def get_job(job_id: str):
         return public_job(job)
 
 
-@app.get("/api/jobs/{job_id}/file")
-def get_file(job_id: str):
+def ready_file(job_id: str) -> tuple[str, str, str]:
     with jobs_lock:
         job = jobs.get(job_id)
         if job is None or job["status"] != "done" or not job["file"]:
             raise HTTPException(status_code=404, detail="Fichier indisponible.")
-        path, filename, fmt = job["file"], job["filename"], job["format"]
+        return job["file"], job["filename"], job["format"]
+
+
+@app.get("/api/jobs/{job_id}/file")
+def get_file(job_id: str):
+    path, filename, fmt = ready_file(job_id)
     media_type = "audio/mpeg" if fmt == "mp3" else "video/mp4"
     return FileResponse(path, filename=filename, media_type=media_type)
+
+
+@app.get("/api/jobs/{job_id}/stream")
+def stream_file(job_id: str):
+    """Même fichier, servi en lecture (inline) pour le lecteur de la page.
+    Starlette gère les requêtes Range, donc on peut avancer dans le morceau."""
+    path, filename, fmt = ready_file(job_id)
+    media_type = "audio/mpeg" if fmt == "mp3" else "video/mp4"
+    return FileResponse(path, filename=filename, media_type=media_type,
+                        content_disposition_type="inline")
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")

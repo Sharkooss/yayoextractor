@@ -27,6 +27,9 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
   - `APP_DOMAIN` — obligatoire, domaine public.
   - `MAX_DURATION_MINUTES` — durée max des vidéos acceptées (défaut 180).
   - `JOB_TTL_MINUTES` — durée de conservation des fichiers convertis (défaut 60).
+  - `DISCORD_WEBHOOK_URL` — facultatif : notification Discord à chaque conversion
+    réussie (titre, chaîne, durée, taille, temps de traitement). Vide = désactivé.
+    À renseigner uniquement dans le `.env` du serveur, jamais dans le dépôt.
 - **Volume** : `downloads` monté sur `/data` (fichiers temporaires de conversion, nettoyés automatiquement).
 - **Healthcheck** : `GET /api/health` (intégré au Dockerfile).
 - **Sidecar `warp`** : proxy Cloudflare WARP ([caomingjun/warp](https://hub.docker.com/r/caomingjun/warp)).
