@@ -40,6 +40,9 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
 - **Sidecar `potprovider`** : génère les PO tokens exigés par YouTube
   ([bgutil-ytdlp-pot-provider](https://github.com/Brainicism/bgutil-ytdlp-pot-provider)).
 - **Deno + yt-dlp-ejs** (dans l'image) : résolvent les défis JavaScript de YouTube.
+- **Clients YouTube de secours** (`YOUTUBE_PLAYER_CLIENTS` dans `app/main.py`) :
+  le client par défaut ne renvoie aucun format sur certaines vidéos
+  (« This video is not available ») ; `mweb` et `tv_embedded` prennent le relais.
 
 ## CI/CD
 

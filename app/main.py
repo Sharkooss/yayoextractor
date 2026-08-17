@@ -38,6 +38,10 @@ CLEANUP_INTERVAL_S = max(60, min(300, JOB_TTL_S // 5))
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 SEARCH_RESULTS = 12
 DOWNLOAD_ATTEMPTS = 3
+# Sur certaines vidéos, les clients YouTube par défaut ne renvoient aucun format
+# et yt-dlp conclut « This video is not available ». On ajoute deux clients de
+# secours qui, eux, répondent : il suffit qu'un seul aboutisse.
+YOUTUBE_PLAYER_CLIENTS = ["default", "mweb", "tv_embedded"]
 
 YOUTUBE_URL_RE = re.compile(
     r"^(https?://)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE
@@ -53,10 +57,12 @@ class JobError(Exception):
 
 def base_ydl_opts() -> dict:
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True}
+    extractor_args = {"youtube": {"player_client": YOUTUBE_PLAYER_CLIENTS}}
     if YTDLP_PROXY:
         opts["proxy"] = YTDLP_PROXY
     if POT_PROVIDER_URL:
-        opts["extractor_args"] = {"youtubepot-bgutilhttp": {"base_url": [POT_PROVIDER_URL]}}
+        extractor_args["youtubepot-bgutilhttp"] = {"base_url": [POT_PROVIDER_URL]}
+    opts["extractor_args"] = extractor_args
     if COOKIES_FILE.is_file():
         opts["cookiefile"] = str(COOKIES_FILE)
     return opts
