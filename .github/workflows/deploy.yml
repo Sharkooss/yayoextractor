@@ -17,6 +17,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+
       - name: Déploiement sur le VPS
         uses: appleboy/ssh-action@v1.2.2
         with:
@@ -33,7 +35,57 @@ jobs:
             export YTDLP_REFRESH="$(date +%Y%m%d%H%M%S)"
             docker compose up -d --build
             docker compose exec -T app python -c "import yt_dlp; print('yt-dlp deploye :', yt_dlp.version.__version__)"
+            # bgutil : le plugin pip et l'image du sidecar doivent partager le
+            # meme major.minor, sinon plus aucun PO token n'est genere et tous
+            # les telechargements YouTube echouent. Les deux sont epingles
+            # (requirements.txt + compose.yaml) mais rien n'empeche de bumper
+            # un seul cote, ni un BGUTIL_VERSION oublie dans le .env du VPS :
+            # ce controle transforme la derive silencieuse en deploiement rouge.
+            plugin="$(docker compose exec -T app python -c "import importlib.metadata as m; print(m.version('bgutil-ytdlp-pot-provider'))")"
+            server=""
+            for _ in 1 2 3 4 5 6 7 8 9 10; do
+              server="$(docker compose exec -T app python -c "import json, urllib.request; print(json.load(urllib.request.urlopen('http://potprovider:4416/ping', timeout=5))['version'])" 2>/dev/null || true)"
+              if [ -n "$server" ]; then break; fi
+              sleep 3
+            done
+            echo "bgutil deploye : plugin ${plugin} / serveur ${server:-injoignable}"
+            if [ -z "$server" ] || [ "${plugin%.*}" != "${server%.*}" ]; then
+              echo "ERREUR : bgutil desaligne (plugin ${plugin}, serveur ${server:-injoignable})."
+              echo "Aligner bgutil-ytdlp-pot-provider dans requirements.txt et le tag potprovider dans compose.yaml."
+              exit 1
+            fi
             docker image prune -f
             # Sans plafond, le cache de build gonfle a chaque deploiement
             # (41 Go accumules avant d'etre reclames le 27/07/2026).
             docker builder prune -f --max-used-space 5GB
+
+      # Les sidecars sont epingles : rien ne les rafraichit tout seul. Ce
+      # rappel non bloquant fait du cron du lundi une veille hebdomadaire,
+      # sans jamais tirer d'image neuve dans le dos du tunnel WARP.
+      - name: Veille des versions sidecar
+        continue-on-error: true
+        run: |
+          set -u
+          warn() { echo "::warning::$1"; echo "- $1" >> "$GITHUB_STEP_SUMMARY"; }
+
+          bgutil_pin="$(grep -oP 'bgutil-ytdlp-pot-provider:\$\{BGUTIL_VERSION:-\K[^}]+' compose.yaml)"
+          bgutil_latest="$(curl -fsSL https://api.github.com/repos/Brainicism/bgutil-ytdlp-pot-provider/releases/latest | jq -r .tag_name)"
+          warp_pin="$(grep -oP 'caomingjun/warp:\K\S+' compose.yaml)"
+          # Classes [.] plutot que \. : un backslash ne survit pas intact aux
+          # couches de quoting YAML/shell/jq, et l'etape etant non bloquante
+          # un filtre casse passerait inapercu.
+          warp_latest="$(curl -fsSL 'https://hub.docker.com/v2/repositories/caomingjun/warp/tags?page_size=100' \
+            | jq -r '[.results[].name | select(test("^[0-9]{4}[.][0-9]+[.][0-9]+[.][0-9]+-[0-9]+[.][0-9]+[.][0-9]+$"))] | first')"
+
+          echo "## Versions sidecar" >> "$GITHUB_STEP_SUMMARY"
+          echo "bgutil : $bgutil_pin (dernière : $bgutil_latest)"
+          echo "warp   : $warp_pin (dernière : $warp_latest)"
+
+          # Une version amont vide ou "null" = requete ratee, pas un bump a faire.
+          usable() { [ -n "$1" ] && [ "$1" != "null" ]; }
+          if usable "$bgutil_latest" && [ "$bgutil_pin" != "$bgutil_latest" ]; then
+            warn "bgutil $bgutil_pin → $bgutil_latest disponible. Bumper ENSEMBLE requirements.txt et le tag potprovider de compose.yaml."
+          fi
+          if usable "$warp_latest" && [ "$warp_pin" != "$warp_latest" ]; then
+            warn "warp $warp_pin → $warp_latest disponible. Bump manuel : vérifier le tunnel après (voir README)."
+          fi

@@ -32,8 +32,11 @@ services:
 
   # Fournit les PO tokens que YouTube exige des IP de serveur,
   # sans cookies ni compte Google. Réseau interne uniquement.
+  # Version épinglée et alignée sur le plugin pip de requirements.txt : les
+  # deux doivent partager le même major.minor, sinon plus aucun PO token n'est
+  # généré. Le déploiement vérifie l'alignement et échoue s'il est rompu.
   potprovider:
-    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    image: brainicism/bgutil-ytdlp-pot-provider:${BGUTIL_VERSION:-1.3.2}
     container_name: yayoextractor-potprovider
     restart: unless-stopped
     networks:
@@ -41,8 +44,12 @@ services:
 
   # Proxy Cloudflare WARP : YouTube bloque les IP de datacenter (anti-bot),
   # tout le trafic yt-dlp sort par ce tunnel. Réseau interne uniquement.
+  # Version épinglée : suivre `latest` ferait tirer une image neuve par le
+  # déploiement automatique du lundi 4h, et un tunnel cassé à ce moment-là
+  # coupe tous les téléchargements sans que personne ne regarde. Le workflow
+  # signale les nouvelles versions dans son log, le bump reste manuel.
   warp:
-    image: caomingjun/warp:latest
+    image: caomingjun/warp:2026.7.1377.0-2.12.0
     container_name: yayoextractor-warp
     restart: unless-stopped
     devices:

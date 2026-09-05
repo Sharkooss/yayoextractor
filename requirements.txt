@@ -4,6 +4,11 @@
 yt-dlp[default]
 # Génère les "PO tokens" exigés par YouTube pour les IP de datacenter,
 # via le conteneur sidecar potprovider (voir compose.yaml).
-bgutil-ytdlp-pot-provider
+# Figé volontairement, contrairement à yt-dlp : YTDLP_REFRESH réinstalle les
+# dépendances à chaque déploiement, donc un plugin non figé dériverait tout
+# seul de l'image du sidecar, elle restée sur son tag. Le plugin et le serveur
+# doivent partager le même major.minor — bumper cette ligne ET le tag de
+# potprovider dans compose.yaml, jamais l'un sans l'autre.
+bgutil-ytdlp-pot-provider==1.3.2
 fastapi>=0.115,<1
 uvicorn[standard]>=0.30,<1
