@@ -3,6 +3,10 @@ name: Deploy
 on:
   push:
     branches: [main]
+  # YouTube casse yt-dlp regulierement : on redeploie chaque lundi pour
+  # recuperer la derniere version meme sans nouveau commit.
+  schedule:
+    - cron: "0 4 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -24,7 +28,11 @@ jobs:
             cd /srv/docker/apps/yayoextractor
             git fetch origin main
             git reset --hard origin/main
+            # Invalide la couche pip pour que yt-dlp soit bien reinstalle,
+            # sinon Docker sert un cache vieux de plusieurs semaines.
+            export YTDLP_REFRESH="$(date +%Y%m%d%H%M%S)"
             docker compose up -d --build
+            docker compose exec -T app python -c "import yt_dlp; print('yt-dlp deploye :', yt_dlp.version.__version__)"
             docker image prune -f
             # Sans plafond, le cache de build gonfle a chaque deploiement
             # (41 Go accumules avant d'etre reclames le 27/07/2026).

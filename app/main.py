@@ -41,7 +41,9 @@ DOWNLOAD_ATTEMPTS = 3
 # Sur certaines vidéos, les clients YouTube par défaut ne renvoient aucun format
 # et yt-dlp conclut « This video is not available ». On ajoute deux clients de
 # secours qui, eux, répondent : il suffit qu'un seul aboutisse.
-YOUTUBE_PLAYER_CLIENTS = ["default", "mweb", "tv_embedded"]
+# Les noms doivent exister dans yt-dlp, sinon ils sont ignorés en silence
+# (`no_warnings`) : « tv_embedded » a disparu et ne servait donc plus de filet.
+YOUTUBE_PLAYER_CLIENTS = ["default", "mweb", "tv"]
 
 YOUTUBE_URL_RE = re.compile(
     r"^(https?://)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE
@@ -256,6 +258,10 @@ def cleanup_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Trace la version : une image construite sur un cache Docker perime
+    # embarque un yt-dlp trop vieux, et YouTube renvoie alors des « 403
+    # Forbidden » impossibles a rattacher a leur cause sans cette ligne.
+    log.info("démarrage avec yt-dlp %s", yt_dlp.version.__version__)
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     for child in JOBS_DIR.iterdir():
         shutil.rmtree(child, ignore_errors=True)

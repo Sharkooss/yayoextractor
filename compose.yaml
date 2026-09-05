@@ -1,6 +1,11 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        # Fourni par la CI (horodatage) pour forcer la reinstallation de
+        # yt-dlp a chaque deploiement, voir Dockerfile.
+        YTDLP_REFRESH: ${YTDLP_REFRESH:-0}
     container_name: yayoextractor
     restart: unless-stopped
     env_file:

@@ -14,7 +14,14 @@ RUN apt-get update \
 WORKDIR /srv/app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# yt-dlp est non fige pour suivre les changements de YouTube, mais Docker
+# reutilise cette couche tant que requirements.txt ne bouge pas : l'image
+# du 17/08/2026 embarquait encore un yt-dlp du 04/07, d'ou un « HTTP Error
+# 403 » sur tous les telechargements. YTDLP_REFRESH change a chaque
+# deploiement et force la reinstallation.
+ARG YTDLP_REFRESH=0
+RUN echo "refresh ${YTDLP_REFRESH}" \
+    && pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
 
