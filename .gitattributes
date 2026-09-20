@@ -1,0 +1,4 @@
+# Les scripts tournent sur le VPS : des fins de ligne CRLF les rendraient
+# illisibles (« bad interpreter: /usr/bin/env bash^M »). Le poste de dev est
+# sous Windows avec core.autocrlf=true, d'où cette garde explicite.
+*.sh text eol=lf

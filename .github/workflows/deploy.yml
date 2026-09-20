@@ -3,8 +3,10 @@ name: Deploy
 on:
   push:
     branches: [main]
-  # YouTube casse yt-dlp regulierement : on redeploie chaque lundi pour
-  # recuperer la derniere version meme sans nouveau commit.
+  # Le rafraichissement de yt-dlp est passe au canari du VPS, qui reconstruit
+  # l'app tous les jours a 6h. Ce cron hebdomadaire reste necessaire pour la
+  # veille des versions sidecar en fin de workflow : elle interroge GitHub et
+  # Docker Hub, ce que le VPS ne fait pas.
   schedule:
     - cron: "0 4 * * 1"
   workflow_dispatch:
@@ -58,6 +60,23 @@ jobs:
             # Sans plafond, le cache de build gonfle a chaque deploiement
             # (41 Go accumules avant d'etre reclames le 27/07/2026).
             docker builder prune -f --max-used-space 5GB
+
+            # Canari : l'IP de sortie WARP finit par etre grillee par YouTube
+            # et l'app repond alors « Sign in to confirm you're not a bot »
+            # sans que rien ne le signale (le conteneur reste healthy). On
+            # reinstalle les taches a chaque deploiement pour qu'elles suivent
+            # le depot. Voir scripts/canary.sh et le README.
+            chmod +x scripts/canary.sh
+            MARK="# yayoextractor-canary"
+            RUN="flock -n /tmp/yayo-canary.lock /srv/docker/apps/yayoextractor/scripts/canary.sh"
+            # « || true » indispensable : sans crontab existante, grep ne lit
+            # rien et sort en 1, ce que « set -e » transformerait en echec de
+            # deploiement a la toute premiere installation.
+            { crontab -l 2>/dev/null | grep -vF "$MARK" || true
+              echo "17 * * * * $RUN 2>&1 | logger -t yayo-canary $MARK"
+              echo "0 6 * * * $RUN --rebuild 2>&1 | logger -t yayo-canary $MARK"
+            } | crontab -
+            crontab -l | grep -F "$MARK"
 
       # Les sidecars sont epingles : rien ne les rafraichit tout seul. Ce
       # rappel non bloquant fait du cron du lundi une veille hebdomadaire,

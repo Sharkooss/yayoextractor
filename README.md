@@ -49,8 +49,12 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
 ## CI/CD
 
 Chaque push sur `main` déclenche `.github/workflows/deploy.yml` : connexion SSH au VPS,
-`git reset --hard origin/main` puis `docker compose up -d --build`. Le workflow tourne
-aussi chaque lundi, pour récupérer le dernier yt-dlp même sans nouveau commit.
+`git reset --hard origin/main` puis `docker compose up -d --build`. Le workflow réinstalle
+aussi les tâches cron du canari (voir plus bas), pour qu'elles suivent le dépôt.
+
+Il tourne également chaque lundi à 4h. Ce n'est plus pour rafraîchir yt-dlp — le canari
+du VPS s'en charge tous les jours à 6h — mais pour la veille des versions sidecar, qui
+interroge GitHub et Docker Hub depuis le runner.
 
 Le build reçoit `YTDLP_REFRESH` (horodatage) : sans lui, Docker réutilise la couche
 `pip install` et fige yt-dlp — c'est ce qui a cassé la prod le 05/09/2026, l'image
@@ -67,6 +71,37 @@ Après déploiement, le workflow vérifie que le plugin pip bgutil et le serveur
 `potprovider` partagent le même `major.minor`, et **échoue** sinon — voir Maintenance.
 
 Secrets GitHub requis : `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY` (clé privée dédiée au déploiement).
+
+## Canari (surveillance et réparation automatique)
+
+`scripts/canary.sh`, installé par la CI dans la crontab du VPS :
+
+| Tâche | Fréquence | Rôle |
+|---|---|---|
+| `canary.sh` | toutes les heures (minute 17) | vérifie que YouTube répond, répare si besoin |
+| `canary.sh --rebuild` | tous les jours à 6h | rafraîchit yt-dlp, puis vérifie |
+
+Journal : `journalctl -t yayo-canary`. Diagnostic à la main, sans rien réparer :
+`/srv/docker/apps/yayoextractor/scripts/canary.sh --probe`.
+
+En cas d'échec, le canari escalade du remède le moins cher au plus cher et s'arrête
+dès que la sonde repasse : rotation du tunnel WARP (jusqu'à 6 fois) → réinscription
+WARP → reconstruction de l'image → alerte Discord.
+
+**Pourquoi cette forme.** Panne du 20/09/2026 : l'IP de sortie WARP avait été grillée
+par YouTube, qui répondait `LOGIN_REQUIRED` sur *tous* les clients. Deux pièges vérifiés
+ce jour-là, qui expliquent chaque détail du script :
+
+- **Mettre à jour yt-dlp ne répare pas cette panne** — la nightly `2026.09.16` échouait
+  autant que la stable. Le remède est la rotation d'IP, pas la mise à jour. Ne pas
+  confondre avec le 403 du 05/09/2026, dont la cause était l'inverse.
+- **Une rotation est une loterie** : la nouvelle IP peut être grillée elle aussi
+  (mesuré : 1re rotation OK, 2e retombée sur une IP bloquée). D'où les 6 essais.
+- **Une IP grillée ne bloque pas tout** : `dQw4w9WgXcQ` répondait encore quand 7 autres
+  vidéos étaient bloquées. Un canari mono-vidéo annoncerait « tout va bien » sur une
+  app morte — la sonde exige donc que **deux** vidéos répondent.
+- Le conteneur reste `healthy` pendant toute la panne : `/api/health` ne teste que
+  FastAPI, jamais YouTube. Rien ne signalait l'incident avant ce canari.
 
 ## Maintenance
 
