@@ -158,6 +158,233 @@ h1 {
 
 .tagline { color: var(--ink-soft); font-size: 1.15rem; margin: 8px 0 0; font-weight: 600; }
 
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------- Onglets Musique / Photos ---------- */
+
+.tabs {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 16px;
+  padding: 5px;
+  background: var(--card);
+  border: 2px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+/* Pastille qui glisse sous l'onglet actif. */
+.tabs::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  left: 5px;
+  width: calc(50% - 5px);
+  border-radius: 999px;
+  background: var(--accent-grad);
+  box-shadow: 0 6px 16px rgba(255, 107, 53, 0.35);
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.tabs[data-active="photos"]::before { transform: translateX(100%); }
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-width: 150px;
+  padding: 11px 26px;
+  font-family: "Fredoka", sans-serif;
+  font-size: 1.12rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  background: none;
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.25s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { color: #fff; }
+.tab:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+main[hidden] { display: none !important; }
+
+/* ---------- Onglet Photos ---------- */
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 250px;
+  padding: 28px 20px;
+  text-align: center;
+  background: var(--field);
+  border: 2.5px dashed var(--line);
+  border-radius: 20px;
+  cursor: pointer;
+  transition: border-color 0.2s, background-color 0.3s ease, transform 0.2s;
+  -webkit-tap-highlight-color: transparent;
+}
+.dropzone:hover { border-color: var(--accent-2); }
+.dropzone:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.dropzone.dragover {
+  border-color: var(--accent);
+  border-style: solid;
+  background: var(--field-selected);
+  transform: scale(1.01);
+}
+
+.drop-art {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 78px;
+  height: 78px;
+  border-radius: 26px;
+  background: var(--field-selected);
+  color: var(--accent);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.drop-art .icon { width: 40px; height: 40px; stroke-width: 1.8; }
+.dropzone.dragover .drop-art { transform: translateY(-4px) rotate(-6deg); }
+
+.drop-text { display: flex; flex-direction: column; gap: 4px; }
+.drop-text strong { font-family: "Fredoka", sans-serif; font-size: 1.35rem; font-weight: 600; }
+.drop-text span { color: var(--ink-soft); font-weight: 600; }
+
+/* Une fois des photos choisies, la zone se fait discrète au-dessus de la grille. */
+.dropzone.compact {
+  flex-direction: row;
+  min-height: 0;
+  padding: 12px 16px;
+  gap: 14px;
+  text-align: left;
+}
+.dropzone.compact .drop-art { width: 46px; height: 46px; border-radius: 15px; flex-shrink: 0; }
+.dropzone.compact .drop-art .icon { width: 24px; height: 24px; }
+.dropzone.compact .drop-text { flex: 1 1 auto; min-width: 0; }
+.dropzone.compact .drop-text strong { font-size: 1.08rem; }
+.dropzone.compact .drop-text span { font-size: 0.92rem; }
+.dropzone.compact .drop-btn { padding: 10px 18px; font-size: 1rem; flex-shrink: 0; }
+
+.tray { margin-top: 16px; display: flex; flex-direction: column; min-height: 0; }
+.tray[hidden] { display: none; }
+.tray-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.tray-head p { margin: 0; font-weight: 800; }
+
+.btn-text {
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  background: none;
+  border: none;
+  padding: 6px 4px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.btn-text:hover { color: var(--danger); }
+.btn-text:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+.photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  grid-auto-rows: 112px;
+  gap: 12px;
+}
+
+.photo-tile {
+  position: relative;
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--thumb-bg);
+  animation: tile-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+@keyframes tile-in { from { opacity: 0; transform: scale(0.85); } }
+.photo-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-tile .tile-format {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  color: var(--ink-soft);
+  font-weight: 800;
+  font-size: 0.8rem;
+  text-align: center;
+  word-break: break-all;
+}
+.photo-tile .tile-format b { font-family: "Fredoka", sans-serif; font-size: 1.15rem; color: var(--accent); }
+.photo-tile.no-preview img { display: none; }
+.photo-tile.no-preview .tile-format { display: flex; }
+
+.tile-remove {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(20, 15, 20, 0.72);
+  color: #fff;
+  cursor: pointer;
+  transition: background-color 0.15s, transform 0.15s;
+}
+.tile-remove:hover { background: var(--danger); transform: scale(1.08); }
+.tile-remove:focus-visible { outline: 3px solid var(--accent); outline-offset: 1px; }
+.tile-remove .icon { width: 18px; height: 18px; stroke-width: 2.6; }
+
+.repair-text { margin: 0 0 14px; color: var(--ink); }
+.repair-text strong { color: var(--accent); }
+
+.fix-list {
+  list-style: none;
+  margin: 0;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--field);
+  border: 2px solid var(--line);
+  border-radius: 18px;
+  font-weight: 700;
+  font-size: 0.98rem;
+  transition: background-color 0.3s ease, border-color 0.3s ease;
+}
+.fix-list li { display: flex; align-items: flex-start; gap: 10px; }
+.fix-list .icon { color: var(--success); stroke-width: 3; margin-top: 0.15em; }
+
 main {
   max-width: 860px;
   margin: 0 auto;
@@ -708,6 +935,8 @@ footer .heart { color: var(--heart); fill: currentColor; stroke: none; }
   header { padding: 20px 20px 4px; }
   .tagline { font-size: 1rem; margin-top: 4px; }
   .theme-toggle { top: 14px; right: 28px; }
+  .tabs { margin-top: 12px; }
+  .tab { padding: 9px 26px; }
 
   main {
     flex: 1 1 auto;
@@ -747,6 +976,16 @@ footer .heart { color: var(--heart); fill: currentColor; stroke: none; }
   .results::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
   .results::-webkit-scrollbar-thumb:hover { background: var(--accent-2); }
 
+  .dropzone:not(.compact) { flex: 1 1 auto; min-height: 0; }
+  .tray { flex: 1 1 auto; }
+  .photo-grid,
+  #repair-card {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+  .photo-grid { flex: 1 1 auto; min-height: 0; padding-right: 8px; align-content: start; }
+
   footer { padding: 4px 20px 14px; font-size: 0.9rem; }
 }
 
@@ -760,6 +999,10 @@ footer .heart { color: var(--heart); fill: currentColor; stroke: none; }
 
 @media (max-width: 560px) {
   body { font-size: 16.5px; }
+  .tab { min-width: 0; padding: 10px 20px; }
+  .dropzone.compact { flex-wrap: wrap; }
+  .dropzone.compact .drop-btn { width: 100%; }
+  .photo-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); grid-auto-rows: 96px; }
   .results { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .vinyl-wrap { width: 210px; height: 210px; }
   .vinyl { inset: 24px; }

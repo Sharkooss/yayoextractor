@@ -1,4 +1,4 @@
-"""Yayo Extractor — YouTube vers MP3/MP4, pensé pour Yayo."""
+"""Yayo Extractor — YouTube vers MP3/MP4, et réparation de photos, pensé pour Yayo."""
 
 import json
 import logging
@@ -10,20 +10,24 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import yt_dlp
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+from app import photos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("yayoextractor")
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 JOBS_DIR = DATA_DIR / "jobs"
+PHOTOS_DIR = DATA_DIR / "photos"
 # Optionnel : un cookies.txt exporté du navigateur, monté dans /data,
 # si YouTube se met à bloquer l'IP du serveur.
 COOKIES_FILE = DATA_DIR / "cookies.txt"
@@ -44,6 +48,10 @@ DOWNLOAD_ATTEMPTS = 3
 # Les noms doivent exister dans yt-dlp, sinon ils sont ignorés en silence
 # (`no_warnings`) : « tv_embedded » a disparu et ne servait donc plus de filet.
 YOUTUBE_PLAYER_CLIENTS = ["default", "mweb", "tv"]
+# Réparation de photos : une requête par photo, pour qu'un envoi lent ne bute
+# pas sur le délai de lecture de Traefik (60 s) comme le ferait un lot entier.
+MAX_PHOTOS_PER_BATCH = 60
+MAX_PHOTO_BYTES = 60 * 1024 * 1024
 
 YOUTUBE_URL_RE = re.compile(
     r"^(https?://)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/", re.IGNORECASE
@@ -51,6 +59,9 @@ YOUTUBE_URL_RE = re.compile(
 
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
+# Lots de photos réparées, mêmes règles d'expiration que les jobs (JOB_TTL_MINUTES).
+photo_batches: dict[str, dict] = {}
+photos_lock = threading.Lock()
 
 
 class JobError(Exception):
@@ -242,18 +253,24 @@ def run_job(job_id: str, url: str, fmt: str) -> None:
         shutil.rmtree(job_dir, ignore_errors=True)
 
 
+def purge_expired(registry: dict[str, dict], lock: threading.Lock, root: Path, cutoff: float) -> int:
+    with lock:
+        stale = [key for key, entry in registry.items() if entry["created_at"] < cutoff]
+        for key in stale:
+            del registry[key]
+    for key in stale:
+        shutil.rmtree(root / key, ignore_errors=True)
+    return len(stale)
+
+
 def cleanup_loop() -> None:
     while True:
         time.sleep(CLEANUP_INTERVAL_S)
         cutoff = time.time() - JOB_TTL_S
-        with jobs_lock:
-            stale = [job_id for job_id, job in jobs.items() if job["created_at"] < cutoff]
-            for job_id in stale:
-                del jobs[job_id]
-        for job_id in stale:
-            shutil.rmtree(JOBS_DIR / job_id, ignore_errors=True)
-        if stale:
-            log.info("nettoyage : %d job(s) supprimé(s)", len(stale))
+        stale_jobs = purge_expired(jobs, jobs_lock, JOBS_DIR, cutoff)
+        stale_photos = purge_expired(photo_batches, photos_lock, PHOTOS_DIR, cutoff)
+        if stale_jobs or stale_photos:
+            log.info("nettoyage : %d job(s) et %d lot(s) de photos supprimés", stale_jobs, stale_photos)
 
 
 @asynccontextmanager
@@ -262,9 +279,10 @@ async def lifespan(_: FastAPI):
     # embarque un yt-dlp trop vieux, et YouTube renvoie alors des « 403
     # Forbidden » impossibles a rattacher a leur cause sans cette ligne.
     log.info("démarrage avec yt-dlp %s", yt_dlp.version.__version__)
-    JOBS_DIR.mkdir(parents=True, exist_ok=True)
-    for child in JOBS_DIR.iterdir():
-        shutil.rmtree(child, ignore_errors=True)
+    for root in (JOBS_DIR, PHOTOS_DIR):
+        root.mkdir(parents=True, exist_ok=True)
+        for child in root.iterdir():
+            shutil.rmtree(child, ignore_errors=True)
     threading.Thread(target=cleanup_loop, daemon=True).start()
     yield
 
@@ -376,6 +394,111 @@ def stream_file(job_id: str):
     path, filename, fmt = ready_file(job_id)
     media_type = "audio/mpeg" if fmt == "mp3" else "video/mp4"
     return FileResponse(path, filename=filename, media_type=media_type,
+                        content_disposition_type="inline")
+
+
+# ---------- Réparation de photos ----------
+
+
+@app.post("/api/photos")
+def create_photo_batch():
+    batch_id = uuid.uuid4().hex
+    (PHOTOS_DIR / batch_id).mkdir(parents=True, exist_ok=True)
+    with photos_lock:
+        photo_batches[batch_id] = {"created_at": time.time(), "items": []}
+    return {"id": batch_id}
+
+
+@app.post("/api/photos/{batch_id}")
+def add_photo(batch_id: str, file: UploadFile = File(...)):
+    """Répare une photo du lot. L'original n'est pas conservé : seul le tampon
+    d'envoi de Starlette l'a contenu, et il disparaît avec la requête."""
+    if file.size is not None and file.size > MAX_PHOTO_BYTES:
+        raise HTTPException(status_code=413, detail="Cette photo est trop lourde (60 Mo maximum).")
+    with photos_lock:
+        batch = photo_batches.get(batch_id)
+        if batch is None:
+            raise HTTPException(status_code=404, detail="Session expirée, recharge la page.")
+        index = len(batch["items"])
+        if index >= MAX_PHOTOS_PER_BATCH:
+            raise HTTPException(status_code=400,
+                                detail=f"{MAX_PHOTOS_PER_BATCH} photos maximum à la fois.")
+        # Réserve l'index tout de suite : les envois arrivent en parallèle.
+        batch["items"].append(None)
+
+    name = file.filename or "photo"
+    item = {"index": index, "name": name, "ok": False, "error": None, "filename": None,
+            "size_in": file.size, "size_out": None}
+    try:
+        data, diagnosis = photos.repair(file.file)
+        (PHOTOS_DIR / batch_id / f"{index}.jpg").write_bytes(data)
+        item |= diagnosis | {
+            "ok": True,
+            "size_out": len(data),
+            "issue_labels": [photos.ISSUE_LABELS[code] for code in diagnosis["issues"]],
+        }
+        log.info("photos %s #%d : %s %dx%d -> baseline (%s)", batch_id[:8], index,
+                 diagnosis["format"], diagnosis["orig_width"], diagnosis["orig_height"],
+                 ", ".join(diagnosis["issues"]) or "rien à signaler")
+    except photos.PhotoError as exc:
+        item["error"] = str(exc)
+    except Exception:
+        log.exception("photos %s #%d : erreur inattendue", batch_id[:8], index)
+        item["error"] = "Une erreur inattendue s'est produite sur cette photo."
+
+    with photos_lock:
+        batch = photo_batches.get(batch_id)
+        if batch is not None:
+            if item["ok"]:
+                # Nom choisi sous le verrou : deux photos du lot peuvent porter le même.
+                taken = {other["filename"] for other in batch["items"] if other and other["filename"]}
+                filename = base = photos.output_name(name)
+                n = 2
+                while filename in taken:
+                    filename, n = f"{base[:-4]}-{n}.jpg", n + 1
+                item["filename"] = filename
+            batch["items"][index] = item
+    return item
+
+
+def photo_file(batch_id: str, index: int) -> tuple[Path, str]:
+    with photos_lock:
+        batch = photo_batches.get(batch_id)
+        items = batch["items"] if batch else []
+        item = items[index] if 0 <= index < len(items) else None
+        if not item or not item["ok"]:
+            raise HTTPException(status_code=404, detail="Photo expirée ou introuvable.")
+        return PHOTOS_DIR / batch_id / f"{index}.jpg", item["filename"]
+
+
+@app.get("/api/photos/{batch_id}/zip")
+def get_photos_zip(batch_id: str):
+    with photos_lock:
+        batch = photo_batches.get(batch_id)
+        ready = [item for item in (batch["items"] if batch else []) if item and item["ok"]]
+    if not ready:
+        raise HTTPException(status_code=404, detail="Photos expirées ou introuvables.")
+    batch_dir = PHOTOS_DIR / batch_id
+    archive = batch_dir / "photos-corrigees.zip"
+    partial = batch_dir / f"{uuid.uuid4().hex}.zip.part"
+    # Les JPEG sont déjà compressés : ZIP_STORED, aussi rapide qu'une copie.
+    with zipfile.ZipFile(partial, "w", zipfile.ZIP_STORED) as zf:
+        for item in ready:
+            zf.write(batch_dir / f"{item['index']}.jpg", item["filename"])
+    os.replace(partial, archive)
+    return FileResponse(archive, filename="photos-corrigees.zip", media_type="application/zip")
+
+
+@app.get("/api/photos/{batch_id}/{index}/file")
+def get_photo(batch_id: str, index: int):
+    path, filename = photo_file(batch_id, index)
+    return FileResponse(path, filename=filename, media_type="image/jpeg")
+
+
+@app.get("/api/photos/{batch_id}/{index}/view")
+def view_photo(batch_id: str, index: int):
+    path, filename = photo_file(batch_id, index)
+    return FileResponse(path, filename=filename, media_type="image/jpeg",
                         content_disposition_type="inline")
 
 

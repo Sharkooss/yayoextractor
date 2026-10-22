@@ -1,7 +1,8 @@
 # 🎵 Yayo Extractor
 
-Petit site pour chercher une vidéo YouTube et la récupérer en **MP3** (ou MP4).
-Backend Python (FastAPI + yt-dlp + ffmpeg), interface statique servie par le même conteneur.
+Petit site pour chercher une vidéo YouTube et la récupérer en **MP3** (ou MP4), avec un
+second onglet **Photos** qui répare les photos que les logiciels de montage refusent d'importer.
+Backend Python (FastAPI + yt-dlp + ffmpeg + Pillow), interface statique servie par le même conteneur.
 
 **Production :** https://yayoextractor.louis-nectoux.fr
 
@@ -32,7 +33,8 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
   - `DISCORD_WEBHOOK_URL` — facultatif : notification Discord à chaque conversion
     réussie (titre, chaîne, durée, taille, temps de traitement). Vide = désactivé.
     À renseigner uniquement dans le `.env` du serveur, jamais dans le dépôt.
-- **Volume** : `downloads` monté sur `/data` (fichiers temporaires de conversion, nettoyés automatiquement).
+- **Volume** : `downloads` monté sur `/data` (fichiers temporaires de conversion et photos
+  réparées, dans `/data/jobs` et `/data/photos`, nettoyés automatiquement).
 - **Healthcheck** : `GET /api/health` (intégré au Dockerfile).
 - **Sidecar `warp`** : proxy Cloudflare WARP ([caomingjun/warp](https://hub.docker.com/r/caomingjun/warp)).
   YouTube bloque les IP de datacenter (« Sign in to confirm you're not a bot ») ;
@@ -45,6 +47,37 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
   (« This video is not available ») ; `mweb` et `tv` prennent le relais.
   Un nom inconnu de yt-dlp est ignoré silencieusement : vérifier qu'il existe
   encore (`INNERTUBE_CLIENTS`) avant de compter dessus.
+
+## Onglet Photos
+
+Lien direct : `https://yayoextractor.louis-nectoux.fr/#photos`.
+
+**Le problème d'origine (21/10/2026).** Les photos reçues par WhatsApp sont des JPEG
+*progressifs* (marqueur `SOF2` au lieu de `SOF0`) : navigateurs et visionneuses les
+affichent, mais beaucoup de logiciels de montage grand public ne décodent que le JPEG
+« baseline » et refusent le fichier. Diagnostic rapide : `ffprobe -show_streams photo.jpg`
+affiche `profile=Progressive`.
+
+`app/photos.py` ré-encode chaque photo en JPEG baseline 8 bits, RVB, sRGB, sans
+métadonnées, en reprenant les tables de quantification d'origine (qualité inchangée,
+écart invisible). Au passage : HEIC/HEIF d'iPhone, PNG/WEBP/GIF/TIFF, rotation EXIF
+appliquée pour de vrai, CMJN, transparence, 16 bits, profils couleur exotiques,
+résolutions au-delà de 4096 px, fichiers tronqués. Noms de sortie ASCII, suffixés `-corrigee`.
+
+- **API** : `POST /api/photos` crée un lot, puis `POST /api/photos/{lot}` (multipart, champ
+  `file`) une requête **par photo** — un lot entier dans une seule requête dépasserait le
+  délai de lecture de Traefik (60 s) sur une connexion lente. Téléchargement :
+  `GET /api/photos/{lot}/{index}/file`, aperçu `…/view`, archive `GET /api/photos/{lot}/zip`.
+- **Limites** : 60 photos par lot, 60 Mo par photo.
+- **Confidentialité** : l'original n'est jamais conservé (lu depuis le tampon d'envoi, que
+  Starlette supprime à la fin de la requête) ; les photos réparées vivent dans `/data/photos`
+  et suivent `JOB_TTL_MINUTES` comme les jobs.
+  La page garde aussi une copie en mémoire, donc les boutons de téléchargement marchent
+  même après l'effacement côté serveur (seul le ZIP dépend du serveur).
+- **Interface** : `app/static/photos.js` + `lab.css`. Pendant la réparation, « YAYO//LAB »
+  joue un spectacle plein écran (bouton « Passer l'animation » ou Échap pour l'écourter).
+  Il affiche de vraies données : octets et marqueurs JPEG du fichier, nombre de passes
+  progressives, blocs 8×8 reconstruits.
 
 ## CI/CD
 

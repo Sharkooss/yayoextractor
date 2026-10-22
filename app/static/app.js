@@ -36,6 +36,49 @@ themeQuery.addEventListener("change", (event) => {
   if (!chosen) applyTheme(event.matches ? "dark" : "light", false);
 });
 
+/* ---------- Onglets Musique / Photos ---------- */
+
+const TABS = {
+  music: {
+    tagline: "Ta musique YouTube en MP3, en deux clics.",
+    title: "Yayo Extractor — Ta musique YouTube en MP3",
+  },
+  photos: {
+    tagline: "Tes photos que le logiciel de montage refuse, réparées en un clic.",
+    title: "Yayo Extractor — Répare tes photos",
+  },
+};
+
+function showTab(name, focus) {
+  if (!TABS[name]) name = "music";
+  document.querySelector(".tabs").dataset.active = name;
+  for (const tab of document.querySelectorAll(".tab")) {
+    const active = tab.dataset.tab === name;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+    $(tab.getAttribute("aria-controls")).hidden = !active;
+    if (active && focus) tab.focus();
+  }
+  $("tagline").textContent = TABS[name].tagline;
+  document.title = TABS[name].title;
+  // Le lien …/#photos ouvre directement l'onglet : pratique à envoyer à Yayo.
+  const hash = name === "photos" ? "#photos" : "";
+  if (location.hash !== hash) history.replaceState(null, "", hash || location.pathname + location.search);
+}
+
+for (const tab of document.querySelectorAll(".tab")) {
+  tab.addEventListener("click", () => showTab(tab.dataset.tab));
+  tab.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      showTab(tab.dataset.tab === "music" ? "photos" : "music", true);
+    }
+  });
+}
+
+showTab(location.hash === "#photos" ? "photos" : "music");
+window.addEventListener("hashchange", () => showTab(location.hash === "#photos" ? "photos" : "music"));
+
 /* ---------- Recherche ---------- */
 
 $("search-form").addEventListener("submit", async (event) => {
