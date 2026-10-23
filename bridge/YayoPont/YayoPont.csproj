@@ -24,6 +24,7 @@
 
   <ItemGroup>
     <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
     <InternalsVisibleTo Include="YayoPont.Tests" />
   </ItemGroup>
 

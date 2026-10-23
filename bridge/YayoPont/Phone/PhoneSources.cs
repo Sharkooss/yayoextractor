@@ -14,12 +14,15 @@ namespace YayoPont.Phone
         PhoneInfo Detect();
 
         /// <summary>Tous les médias, en appelant <paramref name="found"/> au fil de l'eau.</summary>
-        IList<PhoneFile> Enumerate(Action<int> found, CancellationToken cancel);
+        IList<PhoneFile> Enumerate(Action<PhoneFile> found, CancellationToken cancel);
 
         Stream OpenRead(string id);
 
         /// <summary>Vignette JPEG, ou null s'il n'y en a pas.</summary>
         byte[] Thumbnail(string id);
+
+        /// <summary>Un téléphone est branché en USB mais n'expose pas ses fichiers (simple recharge).</summary>
+        bool UsbSeen();
     }
 
     /// <summary>Un appareil USB d'un fabricant de téléphones est branché (même en simple recharge).</summary>
@@ -51,8 +54,9 @@ namespace YayoPont.Phone
     }
 
     /// <summary>
-    /// Mode simulation : un dossier joue le téléphone. Un fichier « VERROUILLE »
-    /// à sa racine simule un téléphone verrouillé.
+    /// Mode simulation : un dossier joue le téléphone. À sa racine, un fichier
+    /// « VERROUILLE » simule un téléphone verrouillé, « RECHARGE » un téléphone
+    /// branché en simple recharge.
     /// </summary>
     internal sealed class FolderPhoneSource : IPhoneSource
     {
@@ -65,7 +69,7 @@ namespace YayoPont.Phone
 
         public PhoneInfo Detect()
         {
-            if (!Directory.Exists(root)) return null;
+            if (!Directory.Exists(root) || UsbSeen()) return null;
             return new PhoneInfo
             {
                 Name = "Téléphone de test",
@@ -74,7 +78,7 @@ namespace YayoPont.Phone
             };
         }
 
-        public IList<PhoneFile> Enumerate(Action<int> found, CancellationToken cancel)
+        public IList<PhoneFile> Enumerate(Action<PhoneFile> found, CancellationToken cancel)
         {
             var files = new List<PhoneFile>();
             Walk(root, "", 0);
@@ -100,7 +104,7 @@ namespace YayoPont.Phone
                         Kind = kind,
                         Source = MediaRules.Source(rel),
                     });
-                    found(files.Count);
+                    found(files[files.Count - 1]);
                 }
                 if (depth >= MediaRules.MaxDepth) return;
                 foreach (var sub in Directory.GetDirectories(dir))
@@ -118,6 +122,8 @@ namespace YayoPont.Phone
         {
             using (var stream = OpenRead(id)) return Thumbnails.FromStream(stream, id);
         }
+
+        public bool UsbSeen() => File.Exists(Path.Combine(root, "RECHARGE"));
 
         public void Dispose() { }
 
