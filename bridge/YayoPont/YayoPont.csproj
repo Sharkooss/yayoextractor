@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- .NET Framework 4.8 est fourni avec Windows 10 (1903+) et 11 : rien à
+       installer chez Yayo, et l'exe reste minuscule. Aucune dépendance NuGet
+       à l'exécution. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>YayoPont</AssemblyName>
+    <RootNamespace>YayoPont</RootNamespace>
+    <Version>1.0.0</Version>
+    <Product>Pont Yayo</Product>
+    <AssemblyTitle>Pont Yayo</AssemblyTitle>
+    <Company>Yayo Extractor</Company>
+    <Description>Relie le site Yayo Extractor au téléphone et à la clé USB</Description>
+    <Copyright>Louis Nectoux</Copyright>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>pont.ico</ApplicationIcon>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Drawing" />
+    <InternalsVisibleTo Include="YayoPont.Tests" />
+  </ItemGroup>
+
+</Project>
