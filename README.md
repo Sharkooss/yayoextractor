@@ -1,8 +1,10 @@
 # 🎵 Yayo Extractor
 
 Petit site pour chercher une vidéo YouTube et la récupérer en **MP3** (ou MP4), avec un
-second onglet **Photos** qui répare les photos que les logiciels de montage refusent d'importer.
-Backend Python (FastAPI + yt-dlp + ffmpeg + Pillow), interface statique servie par le même conteneur.
+onglet **Photos** qui répare les photos que les logiciels de montage refusent d'importer, et un
+onglet **Téléphone** qui copie les photos d'un téléphone vers une clé USB, sans doublons.
+Backend Python (FastAPI + yt-dlp + ffmpeg + Pillow), interface statique servie par le même conteneur ;
+l'onglet Téléphone s'appuie en plus sur le **Pont Yayo** (`bridge/`), un petit programme Windows.
 
 **Production :** https://yayoextractor.louis-nectoux.fr
 
@@ -78,6 +80,50 @@ résolutions au-delà de 4096 px, fichiers tronqués. Noms de sortie ASCII, suff
   joue un spectacle plein écran (bouton « Passer l'animation » ou Échap pour l'écourter).
   Il affiche de vraies données : octets et marqueurs JPEG du fichier, nombre de passes
   progressives, blocs 8×8 reconstruits.
+
+## Onglet Téléphone et Pont Yayo
+
+Lien direct : `https://yayoextractor.louis-nectoux.fr/#telephone`. Conception complète :
+`docs/superpowers/specs/2026-10-23-transfert-telephone-design.md`.
+
+**Pourquoi un programme local.** Un site ne peut pas lire un téléphone branché en USB sous Windows
+(le téléphone y est un appareil MTP tenu par Windows, et Chrome refuse cette classe à WebUSB), ni
+voir qu'une clé vient d'être branchée. Le site fait donc toute l'interface et parle à
+`YayoPont.exe` sur `http://127.0.0.1:47863`, qui lit le téléphone via l'API Windows Portable
+Devices (aucun réglage sur le téléphone) et écrit sur la clé.
+
+- **Le pont** : C# sur .NET Framework 4.8 (fourni avec Windows 10/11), un seul exe d'environ 120 Ko,
+  sans dépendance. Double-clic sur le fichier téléchargé = installation sans droits admin dans
+  `%LOCALAPPDATA%\YayoPont`, démarrage avec la session (clé `Run`), entrée dans « Applications
+  installées ». Journal : `%LOCALAPPDATA%\YayoPont\pont.log`.
+- **SmartScreen** : l'exe n'est pas signé, Windows affiche « Windows a protégé votre ordinateur »
+  à l'installation (une fois) ; l'onglet guide Yayo en images. La copie installée est réécrite
+  sans la marque « téléchargé d'internet », donc pas d'alerte au démarrage de Windows.
+- **Sécurité** : écoute sur `127.0.0.1` seulement, en-tête `Host` vérifié, origines limitées au
+  site (et `localhost:8124` en dev), jeton de session pour tout le reste. Lecture seule sur le
+  téléphone ; écriture seulement sous `Photos du téléphone` sur la clé choisie.
+- **Rangement** : `<clé>\Photos du téléphone\AAAA\MM - Mois\`, date EXIF sinon date du téléphone.
+  Déjà sur la clé = même taille et même nom, ou même taille et mêmes 64 premiers Ko (copies
+  renommées). Copie en `.part`, vérifiée, puis renommée.
+
+### Publier une nouvelle version du pont
+
+Bumper `<Version>` dans `bridge/YayoPont/YayoPont.csproj` et pousser sur `main` :
+`.github/workflows/bridge.yml` teste, construit et publie la release `pont-v<version>` avec
+`YayoPont.exe`. Le site télécharge toujours `releases/latest/download/YayoPont.exe`. Si l'API
+change de façon incompatible, augmenter `Api.Version` (pont) et `API_REQUIRED` (`phone.js`) :
+le site proposera alors la mise à jour.
+
+### Développer sans téléphone ni clé
+
+```bash
+dotnet test bridge/YayoPont.sln
+bridge/YayoPont/bin/Debug/net48/YayoPont.exe --faux-telephone <dossier> --fausse-cle <dossier> --lent
+```
+
+Le premier dossier joue le téléphone (un fichier `VERROUILLE` ou `RECHARGE` à sa racine simule
+les états correspondants), le second la clé ; `--lent` bride la lecture à ~3 Mo/s pour voir
+l'animation de copie. Le site local (`localhost:8124`) est une origine acceptée.
 
 ## CI/CD
 

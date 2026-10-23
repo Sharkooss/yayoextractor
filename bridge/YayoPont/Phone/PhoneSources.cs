@@ -53,6 +53,42 @@ namespace YayoPont.Phone
         }
     }
 
+    /// <summary>Lecture bridée, pour voir l'animation de copie en mode simulation.</summary>
+    internal sealed class SlowStream : Stream
+    {
+        private readonly Stream inner;
+        private readonly int bytesPerSecond;
+
+        public SlowStream(Stream inner, int bytesPerSecond)
+        {
+            this.inner = inner;
+            this.bytesPerSecond = bytesPerSecond;
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            int read = inner.Read(buffer, offset, Math.Min(count, 64 * 1024));
+            if (read > 0) Thread.Sleep((int)(1000L * read / bytesPerSecond));
+            return read;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     /// <summary>
     /// Mode simulation : un dossier joue le téléphone. À sa racine, un fichier
     /// « VERROUILLE » simule un téléphone verrouillé, « RECHARGE » un téléphone
@@ -61,10 +97,13 @@ namespace YayoPont.Phone
     internal sealed class FolderPhoneSource : IPhoneSource
     {
         private readonly string root;
+        private readonly int bytesPerSecond;
 
-        public FolderPhoneSource(string root)
+        /// <param name="bytesPerSecond">0 = pleine vitesse ; sinon simule le débit d'un vrai téléphone.</param>
+        public FolderPhoneSource(string root, int bytesPerSecond = 0)
         {
             this.root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+            this.bytesPerSecond = bytesPerSecond;
         }
 
         public PhoneInfo Detect()
@@ -116,7 +155,11 @@ namespace YayoPont.Phone
             }
         }
 
-        public Stream OpenRead(string id) => File.OpenRead(Resolve(id));
+        public Stream OpenRead(string id)
+        {
+            Stream stream = File.OpenRead(Resolve(id));
+            return bytesPerSecond > 0 ? new SlowStream(stream, bytesPerSecond) : stream;
+        }
 
         public byte[] Thumbnail(string id)
         {
