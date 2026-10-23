@@ -13,6 +13,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\YayoPont\YayoPont.csproj" />
   </ItemGroup>
 
