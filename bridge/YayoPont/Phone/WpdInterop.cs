@@ -37,14 +37,19 @@ namespace YayoPont.Phone
         public static extern int PropVariantClear(ref PropVariant value);
     }
 
+    // Attention : en interop COM, un tableau .NET part par défaut en SAFEARRAY.
+    // WPD attend des tableaux C : sans [MarshalAs(LPArray)], Windows écrit dans
+    // ce qu'il croit être un tableau de pointeurs et corrompt la mémoire
+    // (plantage dès qu'un téléphone est branché, invisible sans appareil).
+
     [ComImport, Guid("a1567595-4c2f-4574-a6fa-ecef917b9a40"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IPortableDeviceManager
     {
-        [PreserveSig] int GetDevices([In, Out] IntPtr[] deviceIds, ref uint count);
+        [PreserveSig] int GetDevices([In, Out, MarshalAs(UnmanagedType.LPArray)] IntPtr[] deviceIds, ref uint count);
         [PreserveSig] int RefreshDeviceList();
-        [PreserveSig] int GetDeviceFriendlyName([MarshalAs(UnmanagedType.LPWStr)] string deviceId, [In, Out] char[] name, ref uint length);
-        [PreserveSig] int GetDeviceDescription([MarshalAs(UnmanagedType.LPWStr)] string deviceId, [In, Out] char[] description, ref uint length);
-        [PreserveSig] int GetDeviceManufacturer([MarshalAs(UnmanagedType.LPWStr)] string deviceId, [In, Out] char[] manufacturer, ref uint length);
+        [PreserveSig] int GetDeviceFriendlyName([MarshalAs(UnmanagedType.LPWStr)] string deviceId, IntPtr name, ref uint length);
+        [PreserveSig] int GetDeviceDescription([MarshalAs(UnmanagedType.LPWStr)] string deviceId, IntPtr description, ref uint length);
+        [PreserveSig] int GetDeviceManufacturer([MarshalAs(UnmanagedType.LPWStr)] string deviceId, IntPtr manufacturer, ref uint length);
     }
 
     [ComImport, Guid("625e2df8-6392-4cf0-9ad1-3cfa5f17775c"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -69,7 +74,7 @@ namespace YayoPont.Phone
     [ComImport, Guid("10ece955-cf41-4728-bfa0-41eedf1bbf19"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IEnumPortableDeviceObjectIDs
     {
-        [PreserveSig] int Next(uint count, [Out] IntPtr[] objectIds, ref uint fetched);
+        [PreserveSig] int Next(uint count, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] IntPtr[] objectIds, ref uint fetched);
     }
 
     [ComImport, Guid("7f6d695c-03df-4439-a809-59266beee3a6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]

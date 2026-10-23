@@ -77,10 +77,12 @@ namespace YayoPont.Phone
 
         private PhoneInfo DetectOnWorker()
         {
+            Trace("detect: manager");
             if (manager == null) manager = Wpd.Create<IPortableDeviceManager>(Wpd.ClsidManager);
             manager.RefreshDeviceList();
             uint count = 0;
             manager.GetDevices(null, ref count);
+            Trace("detect: " + count + " appareil(s)");
             var ids = new List<string>();
             if (count > 0)
             {
@@ -127,11 +129,17 @@ namespace YayoPont.Phone
 
         private PhoneInfo TryOpen(string id)
         {
+            Trace("open: " + id);
             var candidate = Wpd.Create<IPortableDevice>(Wpd.ClsidDeviceFtm);
+            Trace("open: créé");
             if (candidate.Open(id, ClientInfo()) < 0) { Release(candidate); return null; }
+            Trace("open: ouvert");
             if (!candidate.Content(out var content).Ok() || !content.Properties(out var props).Ok()) { Release(candidate); return null; }
+            Trace("open: contenu et propriétés");
             var values = Values(props, Wpd.DeviceObjectId, Wpd.DeviceProtocol, Wpd.DeviceFriendlyName, Wpd.DeviceManufacturer, Wpd.DeviceModel);
+            Trace("open: valeurs " + (values != null));
             var protocol = String(values, Wpd.DeviceProtocol) ?? "";
+            Trace("open: protocole " + protocol);
             // Les clés USB apparaissent aussi dans WPD (protocole « MSC ») : on les écarte.
             if (protocol.StartsWith("MSC", StringComparison.OrdinalIgnoreCase)) { Release(candidate); return null; }
             device = candidate;
@@ -139,6 +147,7 @@ namespace YayoPont.Phone
             var name = String(values, Wpd.DeviceFriendlyName);
             if (string.IsNullOrWhiteSpace(name)) name = String(values, Wpd.DeviceModel) ?? FriendlyName(id) ?? "Téléphone";
             deviceInfo = new PhoneInfo { Name = name, Manufacturer = String(values, Wpd.DeviceManufacturer) ?? "" };
+            Trace("open: stockage ?");
             deviceInfo.State = HasStorage() ? "ready" : "locked";
             Log.Info($"téléphone détecté : {deviceInfo.Manufacturer} {name} ({protocol})");
             return deviceInfo;
@@ -297,10 +306,17 @@ namespace YayoPont.Phone
         private string FriendlyName(string id)
         {
             uint length = 0;
-            manager.GetDeviceFriendlyName(id, null, ref length);
+            manager.GetDeviceFriendlyName(id, IntPtr.Zero, ref length);
             if (length == 0) return null;
-            var buffer = new char[length];
-            return manager.GetDeviceFriendlyName(id, buffer, ref length) < 0 ? null : new string(buffer).TrimEnd('\0');
+            var buffer = Marshal.AllocCoTaskMem((int)length * 2);
+            try
+            {
+                return manager.GetDeviceFriendlyName(id, buffer, ref length) < 0 ? null : Marshal.PtrToStringUni(buffer);
+            }
+            finally
+            {
+                Marshal.FreeCoTaskMem(buffer);
+            }
         }
 
         private static IPortableDeviceValues ClientInfo()
@@ -351,6 +367,14 @@ namespace YayoPont.Phone
             {
                 PropVariant.PropVariantClear(ref variant);
             }
+        }
+
+        /// <summary>Fil d'Ariane dans le journal, seulement avec YAYO_TRACE=1 : survit à un plantage natif.</summary>
+        private static readonly bool Tracing = Environment.GetEnvironmentVariable("YAYO_TRACE") == "1";
+
+        private static void Trace(string step)
+        {
+            if (Tracing) Log.Info("wpd " + step);
         }
 
         private static void Check(int hr)

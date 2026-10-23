@@ -11,7 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=8">
   <link rel="stylesheet" href="lab.css?v=2">
-  <link rel="stylesheet" href="phone.css?v=11">
+  <link rel="stylesheet" href="phone.css?v=13">
   <script>
     // Appliqué avant le rendu : sinon la page clignote en blanc au chargement.
     (function () {
@@ -460,6 +460,13 @@
         </div>
         <div class="gallery-scroll" id="gallery-scroll">
           <div class="gallery" id="gallery"></div>
+          <div class="gallery-more" id="gallery-more" hidden>
+            <button type="button" class="btn btn-primary" id="more-btn">
+              <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg>
+              <span id="more-label">Afficher plus</span>
+            </button>
+            <small id="more-count"></small>
+          </div>
           <p class="gallery-empty" id="gallery-empty" hidden></p>
         </div>
       </div>
@@ -656,6 +663,6 @@
 
   <script src="app.js?v=6"></script>
   <script src="photos.js?v=3"></script>
-  <script src="phone.js?v=9"></script>
+  <script src="phone.js?v=12"></script>
 </body>
 </html>
