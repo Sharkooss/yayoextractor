@@ -9,6 +9,8 @@
 
   const BRIDGE = "http://127.0.0.1:47863";
   const API_REQUIRED = 1;
+  // 1.0.0 plantait dès qu'un téléphone était branché (tableaux mal transmis à WPD).
+  const MIN_BRIDGE = "1.0.1";
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const IS_WINDOWS = /Windows NT/i.test(navigator.userAgent);
   const SOURCES = [
@@ -58,6 +60,15 @@
   }
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  function olderThan(version, minimum) {
+    const a = String(version || "0").split(".").map(Number);
+    const b = minimum.split(".").map(Number);
+    for (let i = 0; i < 3; i++) {
+      if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0);
+    }
+    return false;
+  }
 
   class BridgeError extends Error {
     constructor(kind, message, status) {
@@ -116,6 +127,12 @@
     if (currentPanel === name) return;
     currentPanel = name;
     for (const panel of document.querySelectorAll(".stage-panel")) panel.hidden = panel.id !== "panel-" + name;
+    syncScrollMode();
+  }
+
+  // En galerie, la page défile au lieu de tout tenir sur un écran (voir phone.css).
+  function syncScrollMode() {
+    document.body.classList.toggle("phone-scroll", currentPanel === "galerie" && !$("phone-main").hidden);
   }
 
   function showPontView(view) {
@@ -155,7 +172,7 @@
     if (!currentPanel) showPontView("searching");
     const status = await call("/status", { timeout: 1500 });
     if (!status || status.app !== "yayo-pont") throw new BridgeError("offline");
-    if (status.api < API_REQUIRED) {
+    if (status.api < API_REQUIRED || olderThan(status.version, MIN_BRIDGE)) {
       showPontView("update");
       setRail("pont", "active", "Mise à jour nécessaire");
       return;
@@ -394,8 +411,14 @@
   function loadItems(items) {
     st.items = items.map((item) => ({ ...item, when: item.date ? new Date(item.date) : null }));
     st.byId = new Map(st.items.map((item) => [item.id, item]));
-    // Par défaut, tout ce qui n'est pas déjà sur la clé est choisi.
-    st.selected = new Set(st.items.filter((item) => !item.onDrive).map((item) => item.id));
+    // Par défaut, tout ce qui n'est pas déjà sur la clé est choisi… si ça tient.
+    // Sinon rien n'est coché et la colonne explique qu'il faut choisir.
+    const fresh = st.items.filter((item) => !item.onDrive);
+    const need = fresh.reduce((sum, item) => sum + item.size, 0);
+    const drive = st.drives.find((x) => x.id === st.driveId);
+    st.tooBig = !!drive && need > drive.freeBytes;
+    st.needBytes = need;
+    st.selected = new Set(st.tooBig ? [] : fresh.map((item) => item.id));
   }
 
   /* ---------- Galerie ---------- */
@@ -439,41 +462,88 @@
     }
   }
 
+  // Limite d'affichage : un téléphone peut contenir des dizaines de milliers de
+  // photos. On en montre PAGE_SIZE à la fois (« Afficher plus » pour la suite).
+  // La sélection, elle, se calcule sur les données puis l'écran est mis à jour
+  // en une passe : instantané même sur 20 000 éléments.
+  const PAGE_SIZE = 400;
+  let shown = [];
+  let rendered = 0;
+  let tileRank = 0;
+  const monthGroups = new Map();
+  const sectionByMonth = new Map();
+  const tileById = new Map();
+
+  const monthKey = (item) => (item.when
+    ? `${item.when.getFullYear()}-${String(item.when.getMonth() + 1).padStart(2, "0")}`
+    : "sans-date");
+
   function renderGallery() {
     const gallery = $("gallery");
     thumbQueue.length = 0;
     thumbObserver.disconnect();
+    tileById.clear();
+    sectionByMonth.clear();
+    monthGroups.clear();
+    tileRank = 0;
+    rendered = 0;
     gallery.innerHTML = "";
-    const items = visibleItems();
-    $("gallery-empty").hidden = items.length > 0;
-    if (!items.length) {
+    shown = visibleItems();
+    for (const item of shown) {
+      const key = monthKey(item);
+      if (!monthGroups.has(key)) monthGroups.set(key, []);
+      monthGroups.get(key).push(item);
+    }
+    $("gallery-empty").hidden = shown.length > 0;
+    if (!shown.length) {
       $("gallery-empty").textContent = st.items.length
         ? "Rien à afficher avec ces filtres."
         : "Aucune photo ni vidéo trouvée sur le téléphone.";
-      return;
     }
-    const months = new Map();
-    for (const item of items) {
-      const key = item.when ? `${item.when.getFullYear()}-${String(item.when.getMonth() + 1).padStart(2, "0")}` : "sans-date";
-      if (!months.has(key)) months.set(key, []);
-      months.get(key).push(item);
+    renderMore();
+  }
+
+  function renderMore() {
+    const gallery = $("gallery");
+    const end = Math.min(shown.length, rendered + PAGE_SIZE);
+    const batches = new Map();
+    for (let i = rendered; i < end; i++) {
+      const item = shown[i];
+      const key = monthKey(item);
+      let section = sectionByMonth.get(key);
+      if (!section) {
+        section = createSection(key, item);
+        gallery.appendChild(section);
+        sectionByMonth.set(key, section);
+      }
+      if (!batches.has(section)) batches.set(section, document.createDocumentFragment());
+      batches.get(section).appendChild(makeTile(item, tileRank++));
     }
-    let rank = 0;
-    for (const [key, list] of months) {
-      const section = document.createElement("section");
-      section.className = "month";
-      section.dataset.month = key;
-      const title = key === "sans-date" ? "Sans date" : capitalize(monthFormat.format(list[0].when));
-      section.innerHTML = `
-        <div class="month-head"><h4></h4><span></span><button type="button" class="btn-text month-toggle"></button></div>
-        <div class="month-grid"></div>`;
-      section.querySelector("h4").textContent = title;
-      section.querySelector(".month-head span").textContent = plural(list.length, "élément");
-      const grid = section.querySelector(".month-grid");
-      for (const item of list) grid.appendChild(makeTile(item, rank++));
-      gallery.appendChild(section);
+    for (const [section, fragment] of batches) {
+      section.querySelector(".month-grid").appendChild(fragment);
       updateMonthToggle(section);
     }
+    rendered = end;
+    const remaining = shown.length - rendered;
+    $("gallery-more").hidden = remaining <= 0;
+    if (remaining > 0) {
+      $("more-label").textContent = `Afficher ${Math.min(PAGE_SIZE, remaining).toLocaleString("fr-FR")} de plus`;
+      $("more-count").textContent = `${remaining.toLocaleString("fr-FR")} ${remaining > 1 ? "autres, plus anciennes" : "autre, plus ancienne"}`;
+    }
+  }
+
+  $("more-btn").addEventListener("click", renderMore);
+
+  function createSection(key, first) {
+    const section = document.createElement("section");
+    section.className = "month";
+    section.dataset.month = key;
+    section.innerHTML = `
+      <div class="month-head"><h4></h4><span></span><button type="button" class="btn-text month-toggle"></button></div>
+      <div class="month-grid"></div>`;
+    section.querySelector("h4").textContent = key === "sans-date" ? "Sans date" : capitalize(monthFormat.format(first.when));
+    section.querySelector(".month-head span").textContent = plural(monthGroups.get(key).length, "élément");
+    return section;
   }
 
   const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -484,23 +554,23 @@
     const tile = document.createElement("div");
     tile.className = "tile" + (item.onDrive ? " on-drive" : "");
     tile.dataset.id = item.id;
+    tileById.set(item.id, tile);
     tile.tabIndex = 0;
     tile.setAttribute("role", "checkbox");
     tile.setAttribute("aria-checked", String(st.selected.has(item.id)));
-    tile.setAttribute("aria-pressed", String(st.selected.has(item.id)));
     if (item.onDrive) tile.setAttribute("aria-disabled", "true");
     tile.setAttribute("aria-label", `${item.name}${item.onDrive ? ", déjà sur la clé" : ""}`);
     if (rank < 40) tile.style.animationDelay = `${rank * 18}ms`;
     else tile.style.animation = "none";
+    const onDriveBadge = item.onDrive
+      ? `<span class="badge-ok"><svg class="icon"><use href="#i-tick"/></svg>Sur la clé</span>`
+      : "<span hidden></span>";
+    const videoBadge = item.kind === "video" ? `<span><svg class="icon"><use href="#i-play"/></svg>Vidéo</span>` : "";
     tile.innerHTML = `
       <span class="tile-icon" aria-hidden="true"><svg class="icon"><use href="#i-${item.kind === "video" ? "film" : "image"}"/></svg></span>
       <img alt="" crossorigin="anonymous" decoding="async">
       <span class="tile-check" aria-hidden="true"><svg class="icon"><use href="#i-tick"/></svg></span>
-      <span class="tile-badge" aria-hidden="true"></span>`;
-    const badge = tile.querySelector(".tile-badge");
-    if (item.onDrive) badge.insertAdjacentHTML("beforeend", `<span class="badge-ok"><svg class="icon"><use href="#i-tick"/></svg>Sur la clé</span>`);
-    else badge.insertAdjacentHTML("beforeend", "<span hidden></span>");
-    if (item.kind === "video") badge.insertAdjacentHTML("beforeend", `<span><svg class="icon"><use href="#i-play"/></svg>Vidéo</span>`);
+      <span class="tile-badge" aria-hidden="true">${onDriveBadge}${videoBadge}</span>`;
     const img = tile.querySelector("img");
     img.addEventListener("load", () => img.classList.add("loaded"));
     img.addEventListener("error", () => img.remove());
@@ -527,7 +597,7 @@
       thumbQueue.push(entry.target);
     }
     pumpThumbs();
-  }, { root: null, rootMargin: "400px 0px" });
+  }, { root: null, rootMargin: "300px 0px" });
 
   function pumpThumbs() {
     while (thumbsLoading < 4 && thumbQueue.length) {
@@ -545,24 +615,30 @@
   }
 
   function updateMonthToggle(section) {
-    const ids = [...section.querySelectorAll(".tile:not(.on-drive)")].map((tile) => tile.dataset.id);
+    let selectable = 0;
+    let selected = 0;
+    for (const item of monthGroups.get(section.dataset.month) || []) {
+      if (item.onDrive) continue;
+      selectable++;
+      if (st.selected.has(item.id)) selected++;
+    }
     const button = section.querySelector(".month-toggle");
-    button.hidden = ids.length === 0;
-    const all = ids.length > 0 && ids.every((id) => st.selected.has(id));
+    button.hidden = selectable === 0;
+    const all = selectable > 0 && selected === selectable;
     button.textContent = all ? "Retirer le mois" : "Choisir tout le mois";
     button.dataset.all = String(all);
   }
 
-  function setSelected(id, on) {
-    const item = st.byId.get(id);
-    if (!item || item.onDrive) return;
-    if (on) st.selected.add(id);
-    else st.selected.delete(id);
-    const tile = document.querySelector(`.tile[data-id="${CSS.escape(id)}"]`);
-    if (tile) {
-      tile.setAttribute("aria-checked", String(on));
-      tile.setAttribute("aria-pressed", String(on));
-    }
+  function paintTile(id) {
+    const tile = tileById.get(id);
+    if (tile) tile.setAttribute("aria-checked", String(st.selected.has(id)));
+  }
+
+  /** Après une action groupée : une seule passe sur ce qui est affiché. */
+  function syncSelection() {
+    for (const id of tileById.keys()) paintTile(id);
+    for (const section of sectionByMonth.values()) updateMonthToggle(section);
+    updateAction();
   }
 
   $("gallery").addEventListener("click", (event) => {
@@ -572,14 +648,22 @@
     if (toggle) {
       const section = toggle.closest(".month");
       const on = toggle.dataset.all !== "true";
-      for (const tile of section.querySelectorAll(".tile:not(.on-drive)")) setSelected(tile.dataset.id, on);
+      for (const item of monthGroups.get(section.dataset.month) || []) {
+        if (item.onDrive) continue;
+        if (on) st.selected.add(item.id);
+        else st.selected.delete(item.id);
+        paintTile(item.id);
+      }
       updateMonthToggle(section);
       updateAction();
       return;
     }
     const tile = event.target.closest(".tile");
     if (!tile || tile.classList.contains("on-drive")) return;
-    setSelected(tile.dataset.id, !st.selected.has(tile.dataset.id));
+    const id = tile.dataset.id;
+    if (st.selected.has(id)) st.selected.delete(id);
+    else st.selected.add(id);
+    paintTile(id);
     updateMonthToggle(tile.closest(".month"));
     updateAction();
   });
@@ -612,16 +696,15 @@
     renderGallery();
   });
 
+  // « Tout » = tout ce que montrent les filtres, pages pas encore affichées comprises.
   $("select-all").addEventListener("click", () => {
-    for (const item of visibleItems()) setSelected(item.id, true);
-    document.querySelectorAll(".month").forEach(updateMonthToggle);
-    updateAction();
+    for (const item of shown) if (!item.onDrive) st.selected.add(item.id);
+    syncSelection();
   });
 
   $("select-none").addEventListener("click", () => {
-    for (const id of [...st.selected]) setSelected(id, false);
-    document.querySelectorAll(".month").forEach(updateMonthToggle);
-    updateAction();
+    st.selected.clear();
+    syncSelection();
   });
 
   function updateAction() {
@@ -648,7 +731,9 @@
     document.querySelector(".space-gauge").classList.toggle("over", over);
     $("space-text").textContent = over
       ? `Pas assez de place : il manque ${formatBytes(bytes - drive.freeBytes)} sur la clé.`
-      : count
+      : !count && st.tooBig
+        ? `Tout ne tient pas sur la clé (${formatBytes(st.needBytes)} pour ${formatBytes(drive.freeBytes)} de libre) : choisis un mois ou quelques photos.`
+        : count
         ? `Il restera ${formatBytes(drive.freeBytes - bytes)} de libre sur la clé.`
         : `${formatBytes(drive.freeBytes)} de libre sur la clé.`;
     $("copy-btn").disabled = !count || over;
@@ -1003,6 +1088,7 @@
 
   // L'onglet devient visible (clic, lien #telephone) : on relance tout de suite.
   new MutationObserver(() => {
+    syncScrollMode(); // les autres onglets gardent leur mise en page sur un écran
     if (!$("phone-main").hidden) kick();
   }).observe($("phone-main"), { attributes: true, attributeFilter: ["hidden"] });
   document.addEventListener("visibilitychange", () => {

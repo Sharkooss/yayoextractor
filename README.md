@@ -112,7 +112,14 @@ Bumper `<Version>` dans `bridge/YayoPont/YayoPont.csproj` et pousser sur `main` 
 `.github/workflows/bridge.yml` teste, construit et publie la release `pont-v<version>` avec
 `YayoPont.exe`. Le site télécharge toujours `releases/latest/download/YayoPont.exe`. Si l'API
 change de façon incompatible, augmenter `Api.Version` (pont) et `API_REQUIRED` (`phone.js`) :
-le site proposera alors la mise à jour.
+le site proposera alors la mise à jour. Pour écarter une version défectueuse déjà installée,
+monter `MIN_BRIDGE` dans `phone.js` (1.0.1 depuis le plantage WPD de la 1.0.0).
+
+**Piège WPD** : en interop COM, un tableau .NET part en SAFEARRAY par défaut ; WPD attend des
+tableaux C. Tout paramètre tableau des interfaces de `WpdInterop.cs` doit porter
+`[MarshalAs(UnmanagedType.LPArray)]` (vérifié par `WpdInteropTests`). Sans téléphone branché, le
+bug ne se voit pas. Diagnostic sur place : lancer le pont avec `YAYO_TRACE=1` pour tracer chaque
+appel WPD dans `pont.log`.
 
 ### Développer sans téléphone ni clé
 

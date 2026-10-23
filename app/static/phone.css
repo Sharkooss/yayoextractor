@@ -610,8 +610,8 @@
   transition: border-color 0.15s;
   pointer-events: none;
 }
-.tile[aria-pressed="true"]::after { border-color: var(--accent); }
-.tile[aria-pressed="true"] img { transform: scale(0.94); border-radius: 12px; }
+.tile[aria-checked="true"]::after { border-color: var(--accent); }
+.tile[aria-checked="true"] img { transform: scale(0.94); border-radius: 12px; }
 .tile-check {
   position: absolute;
   top: 8px;
@@ -629,8 +629,8 @@
   transition: background-color 0.15s, transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .tile-check .icon { width: 16px; height: 16px; stroke-width: 3.4; opacity: 0; }
-.tile[aria-pressed="true"] .tile-check { background: var(--accent); border-color: var(--accent); transform: scale(1.1); }
-.tile[aria-pressed="true"] .tile-check .icon { opacity: 1; }
+.tile[aria-checked="true"] .tile-check { background: var(--accent); border-color: var(--accent); transform: scale(1.1); }
+.tile[aria-checked="true"] .tile-check .icon { opacity: 1; }
 .tile-badge {
   position: absolute;
   bottom: 7px;
@@ -938,3 +938,39 @@
 .install-step { padding: 12px; }
 .install-copy strong { font-size: 0.95rem; }
 .install-copy span { font-size: 0.86rem; }
+
+/* ---------- Galerie : la page défile, on voit beaucoup de lignes ----------
+   La mise en page « tout sur un écran » du site ne laissait qu'une ligne de
+   vignettes sur un portable. En galerie, la page défile normalement : la
+   colonne de gauche (et son bouton « Copier ») reste épinglée, la barre de
+   filtres reste collée en haut. */
+.gallery-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin: -8px -6px 0;
+  padding: 8px 6px 10px;
+  background: var(--card);
+  border-radius: 0 0 14px 14px;
+  transition: background-color 0.3s ease;
+}
+.month-head { position: static; }
+
+.gallery-more { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 26px 0 6px; }
+.gallery-more[hidden] { display: none; }
+.gallery-more small { font-weight: 700; color: var(--ink-soft); }
+
+@media (min-width: 960px) and (min-height: 620px) {
+  body.phone-scroll { height: auto; min-height: 100vh; overflow: visible; }
+  body.phone-scroll .phone-main { align-items: start; }
+  body.phone-scroll .phone-rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); }
+  body.phone-scroll .phone-stage { overflow: visible; }
+  body.phone-scroll .panel-gallery { flex: none; }
+  body.phone-scroll .gallery-scroll { overflow: visible; padding-right: 0; }
+}
+
+/* Barre de filtres sur deux lignes au plus : les provenances défilent
+   horizontalement au lieu de s'empiler. */
+#source-chips { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 4px; margin: -2px -2px 0; }
+#source-chips::-webkit-scrollbar { display: none; }
+#source-chips .chip { flex-shrink: 0; }
