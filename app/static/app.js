@@ -47,7 +47,12 @@ const TABS = {
     tagline: "Tes photos que le logiciel de montage refuse, réparées en un clic.",
     title: "Yayo Extractor — Répare tes photos",
   },
+  telephone: {
+    tagline: "Les photos de ton téléphone sur une clé USB, sans doublons.",
+    title: "Yayo Extractor — Téléphone vers clé USB",
+  },
 };
+const TAB_ORDER = Object.keys(TABS);
 
 function showTab(name, focus) {
   if (!TABS[name]) name = "music";
@@ -61,8 +66,8 @@ function showTab(name, focus) {
   }
   $("tagline").textContent = TABS[name].tagline;
   document.title = TABS[name].title;
-  // Le lien …/#photos ouvre directement l'onglet : pratique à envoyer à Yayo.
-  const hash = name === "photos" ? "#photos" : "";
+  // Les liens …/#photos et …/#telephone ouvrent directement l'onglet : pratique à envoyer à Yayo.
+  const hash = name === "music" ? "" : "#" + name;
   if (location.hash !== hash) history.replaceState(null, "", hash || location.pathname + location.search);
 }
 
@@ -71,13 +76,15 @@ for (const tab of document.querySelectorAll(".tab")) {
   tab.addEventListener("keydown", (event) => {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      showTab(tab.dataset.tab === "music" ? "photos" : "music", true);
+      const step = event.key === "ArrowRight" ? 1 : TAB_ORDER.length - 1;
+      showTab(TAB_ORDER[(TAB_ORDER.indexOf(tab.dataset.tab) + step) % TAB_ORDER.length], true);
     }
   });
 }
 
-showTab(location.hash === "#photos" ? "photos" : "music");
-window.addEventListener("hashchange", () => showTab(location.hash === "#photos" ? "photos" : "music"));
+const tabFromHash = () => (TABS[location.hash.slice(1)] ? location.hash.slice(1) : "music");
+showTab(tabFromHash());
+window.addEventListener("hashchange", () => showTab(tabFromHash()));
 
 /* ---------- Recherche ---------- */
 

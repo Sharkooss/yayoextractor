@@ -1,0 +1,60 @@
+name: Pont Yayo
+
+# Construit et publie YayoPont.exe, le petit programme que l'onglet Téléphone
+# fait installer sur le PC. Le site télécharge toujours
+# releases/latest/download/YayoPont.exe : publier une version = bumper <Version>
+# dans bridge/YayoPont/YayoPont.csproj et pousser sur main.
+on:
+  push:
+    branches: [main]
+    paths: ["bridge/**", ".github/workflows/bridge.yml"]
+  pull_request:
+    paths: ["bridge/**", ".github/workflows/bridge.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pont-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Tests
+        run: dotnet test bridge/YayoPont.sln -c Release
+
+      - name: Build
+        run: dotnet build bridge/YayoPont/YayoPont.csproj -c Release -o out
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $version = (Select-Xml -Path bridge/YayoPont/YayoPont.csproj -XPath "//Version").Node.InnerText
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Pont Yayo $version ($((Get-Item out/YayoPont.exe).Length) octets)"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YayoPont-${{ steps.version.outputs.version }}
+          path: out/YayoPont.exe
+
+      - name: Publication
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "pont-v${{ steps.version.outputs.version }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "$tag est déjà publiée : bumper <Version> pour publier une nouvelle version."
+            exit 0
+          }
+          $notes = "Pont Yayo ${{ steps.version.outputs.version }} : relie l'onglet Téléphone de yayoextractor.louis-nectoux.fr au téléphone et à la clé USB."
+          gh release create $tag out/YayoPont.exe --title "Pont Yayo ${{ steps.version.outputs.version }}" --notes $notes --latest

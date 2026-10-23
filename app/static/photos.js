@@ -943,7 +943,7 @@
       function frame(now) {
         if (done) return;
         if (el._decode !== token) return finish();
-        const p = Math.min(1, (now - start) / ms);
+        const p = Math.min(1, Math.max(0, (now - start) / ms));
         const fixed = Math.floor(p * text.length);
         let out = text.slice(0, fixed);
         for (let k = fixed; k < text.length; k++) {
@@ -1052,7 +1052,7 @@
       const release = guard(ms * SPEED, finish);
       function frame(now) {
         if (done) return;
-        const p = Math.min(1, (now - start) / (ms * SPEED));
+        const p = Math.min(1, Math.max(0, (now - start) / (ms * SPEED))); // l'horodatage rAF peut précéder start
         el.textContent = Math.round(to * easeOut(p)).toLocaleString("fr-FR");
         if (p < 1) requestAnimationFrame(frame);
         else finish();
@@ -1386,7 +1386,7 @@
       const release = guard(duration * SPEED, finish);
       function frame(now) {
         if (done) return;
-        const p = Math.min(1, (now - start) / (duration * SPEED));
+        const p = Math.min(1, Math.max(0, (now - start) / (duration * SPEED)));
         const target = Math.floor(total * easeInOut(p));
         for (const k of lit) paint(k, false);
         lit = [];

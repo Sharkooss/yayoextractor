@@ -175,7 +175,7 @@ h1 {
 .tabs {
   position: relative;
   display: inline-grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   margin-top: 16px;
   padding: 5px;
   background: var(--card);
@@ -191,13 +191,14 @@ h1 {
   top: 5px;
   bottom: 5px;
   left: 5px;
-  width: calc(50% - 5px);
+  width: calc((100% - 10px) / 3);
   border-radius: 999px;
   background: var(--accent-grad);
   box-shadow: 0 6px 16px rgba(255, 107, 53, 0.35);
   transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .tabs[data-active="photos"]::before { transform: translateX(100%); }
+.tabs[data-active="telephone"]::before { transform: translateX(200%); }
 
 .tab {
   position: relative;
@@ -206,7 +207,7 @@ h1 {
   justify-content: center;
   gap: 9px;
   min-width: 150px;
-  padding: 11px 26px;
+  padding: 11px 22px;
   font-family: "Fredoka", sans-serif;
   font-size: 1.12rem;
   font-weight: 600;
@@ -999,11 +1000,18 @@ footer .heart { color: var(--heart); fill: currentColor; stroke: none; }
 
 @media (max-width: 560px) {
   body { font-size: 16.5px; }
-  .tab { min-width: 0; padding: 10px 20px; }
+  .tab { min-width: 0; padding: 10px 8px; gap: 6px; font-size: 1rem; }
+  .tabs { width: calc(100% - 8px); }
   .dropzone.compact { flex-wrap: wrap; }
   .dropzone.compact .drop-btn { width: 100%; }
   .photo-grid { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); grid-auto-rows: 96px; }
   .results { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
   .vinyl-wrap { width: 210px; height: 210px; }
   .vinyl { inset: 24px; }
+}
+
+/* Trois onglets sur un téléphone : le texte seul, les icônes prendraient sa place. */
+@media (max-width: 440px) {
+  .tab .icon { display: none; }
+  .tab { font-size: 0.98rem; }
 }

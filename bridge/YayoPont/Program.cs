@@ -39,7 +39,9 @@ namespace YayoPont
                     Installer.Install();
                     return 0;
                 }
-                return Serve(simulation, background, phoneDir, driveDir);
+                // --lent : la simulation lit à ~3 Mo/s, comme un vrai téléphone (pour voir l'animation).
+                int simulatedSpeed = args.Contains("--lent") ? 3 * 1024 * 1024 : 0;
+                return Serve(simulation, background, phoneDir, driveDir, simulatedSpeed);
             }
             catch (Exception ex)
             {
@@ -51,7 +53,7 @@ namespace YayoPont
             }
         }
 
-        private static int Serve(bool simulation, bool background, string phoneDir, string driveDir)
+        private static int Serve(bool simulation, bool background, string phoneDir, string driveDir, int simulatedSpeed)
         {
             var suffix = simulation ? ".Simulation" : "";
             using (var mutex = new Mutex(true, Installer.MutexName + suffix, out bool first))
@@ -63,7 +65,7 @@ namespace YayoPont
                     return 0;
                 }
                 using (var quit = new EventWaitHandle(false, EventResetMode.ManualReset, Installer.QuitEventName + suffix))
-                using (IPhoneSource phone = phoneDir != null ? (IPhoneSource)new FolderPhoneSource(phoneDir) : new WpdPhoneSource())
+                using (IPhoneSource phone = phoneDir != null ? (IPhoneSource)new FolderPhoneSource(phoneDir, simulatedSpeed) : new WpdPhoneSource())
                 {
                     IDriveProvider drives = driveDir != null ? (IDriveProvider)new FakeDriveProvider(driveDir) : new RealDriveProvider();
                     var security = new Security(Port);
