@@ -41,8 +41,8 @@ namespace YayoPont.Tests
             File.WriteAllBytes(path, data);
         }
 
-        private (FolderPhoneSource phone, DriveDto drive) Setup() =>
-            (new FolderPhoneSource(phoneDir), new FakeDriveProvider(driveDir).List().Single());
+        private (FolderPhoneSource phone, Target drive) Setup() =>
+            (new FolderPhoneSource(phoneDir), Target.ForDrive(new FakeDriveProvider(driveDir).List().Single(), null));
 
         [Fact]
         public void Analyse_compte_et_reconnait_les_copies_renommees()

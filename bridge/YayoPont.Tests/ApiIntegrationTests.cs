@@ -72,7 +72,7 @@ namespace YayoPont.Tests
             var status = Send(HttpMethod.Get, "/status");
             Assert.Equal(HttpStatusCode.OK, status.StatusCode);
             Assert.Equal(Site, status.Headers.GetValues("Access-Control-Allow-Origin").Single());
-            Assert.Equal(1d, JsonOf(status)["api"]);
+            Assert.Equal(2d, JsonOf(status)["api"]);
 
             Assert.Equal(HttpStatusCode.Unauthorized, Send(HttpMethod.Get, "/devices").StatusCode);
             Assert.Equal(HttpStatusCode.Forbidden, Send(HttpMethod.Post, "/session", origin: "https://evil.com").StatusCode);
@@ -102,7 +102,10 @@ namespace YayoPont.Tests
             var transfer = Poll("/transfer/" + transferId, token);
             Assert.Equal("done", transfer["state"]);
             Assert.Equal(2d, transfer["copied"]);
-            Assert.Equal(2, Directory.GetFiles(Path.Combine(driveDir, "Photos du téléphone"), "*", SearchOption.AllDirectories).Length);
+            var written = Directory.GetFiles(Path.Combine(driveDir, "Photos du téléphone"), "*", SearchOption.AllDirectories);
+            Assert.Equal(2, written.Count(f => Core.MediaRules.Kind(f) != null));
+            Assert.Contains(written, f => Path.GetFileName(f) == ".yayo-pont.tsv");
+            Assert.Equal(2, ((List<object>)transfer["copiedFiles"]).Count);
 
             var rescan = Poll("/scan/" + (string)JsonOf(Send(HttpMethod.Post, "/scan", token, "{\"driveId\":\"TEST\"}"))["jobId"], token);
             Assert.All((List<object>)rescan["items"], i => Assert.Equal(true, ((Dictionary<string, object>)i)["onDrive"]));

@@ -5,15 +5,18 @@ using System.IO;
 namespace YayoPont.Core
 {
     /// <summary>
-    /// Ce qui est déjà sur la clé. Un fichier du téléphone y est « déjà » si un
-    /// fichier de la clé a la même taille et soit le même nom, soit le même début
-    /// (copie renommée). Le téléphone n'est lu que pour les tailles en collision.
+    /// Ce qui est déjà sur la destination. Un fichier du téléphone y est « déjà »
+    /// si un fichier de la destination a la même taille et soit le même nom, soit
+    /// le même début (copie renommée), ou si l'index des copies le connaît (même
+    /// nom et même taille d'origine : photo animée raccourcie). Le téléphone n'est
+    /// lu que pour les tailles en collision.
     /// </summary>
     internal sealed class DuplicateIndex
     {
         public const int HeadSize = 64 * 1024;
 
         private readonly Dictionary<long, List<string>> bySize = new Dictionary<long, List<string>>();
+        private readonly HashSet<string> copies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly object gate = new object();
 
         public int Count { get; private set; }
@@ -22,6 +25,14 @@ namespace YayoPont.Core
         {
             var index = new DuplicateIndex();
             foreach (var (path, size) in files) index.Add(path, size);
+            return index;
+        }
+
+        /// <summary>Index d'une destination : ses médias complets, plus l'index des copies du dossier géré.</summary>
+        public static DuplicateIndex ForTarget(Target target)
+        {
+            var index = Build(MediaFiles(target.IndexRoot));
+            foreach (var entry in CopyIndex.Load(target.ManagedRoot)) index.AddCopy(entry.PhoneName, entry.PhoneSize);
             return index;
         }
 
@@ -35,11 +46,18 @@ namespace YayoPont.Core
             }
         }
 
+        /// <summary>Un fichier du téléphone (nom, taille d'origine) déjà copié, même si la copie a changé de taille.</summary>
+        public void AddCopy(string phoneName, long phoneSize)
+        {
+            lock (gate) copies.Add(CopyKey(phoneName, phoneSize));
+        }
+
         public bool IsOnDrive(string name, long size, Func<byte[]> phoneHead, Func<string, byte[]> driveHead)
         {
             List<string> candidates;
             lock (gate)
             {
+                if (copies.Contains(CopyKey(name, size))) return true;
                 if (!bySize.TryGetValue(size, out var paths)) return false;
                 candidates = new List<string>(paths);
             }
@@ -55,6 +73,8 @@ namespace YayoPont.Core
             }
             return false;
         }
+
+        private static string CopyKey(string name, long size) => size + "\t" + name;
 
         /// <summary>Les 64 premiers Ko d'un fichier (moins s'il est plus petit), null si illisible.</summary>
         public static byte[] ReadHead(string path)
@@ -78,9 +98,23 @@ namespace YayoPont.Core
             return head;
         }
 
-        /// <summary>Tous les médias d'un lecteur, sans les dossiers système ni ceux qu'on ne peut pas lire.</summary>
+        /// <summary>
+        /// Tous les médias sous un dossier, sans les dossiers système ni ceux qu'on
+        /// ne peut pas lire. Une vidéo incomplète n'y figure pas : le fichier du
+        /// téléphone redevient « à copier ».
+        /// </summary>
         public static IEnumerable<(string path, long size)> MediaFiles(string root)
         {
+            foreach (var (path, size) in AllMediaFiles(root))
+            {
+                if (Mp4Info.IsMp4Family(path) && Mp4Info.IsComplete(path) == false) continue;
+                yield return (path, size);
+            }
+        }
+
+        internal static IEnumerable<(string path, long size)> AllMediaFiles(string root)
+        {
+            if (!Directory.Exists(root)) yield break;
             var pending = new Stack<string>();
             pending.Push(root);
             while (pending.Count > 0)
@@ -104,12 +138,21 @@ namespace YayoPont.Core
                 }
                 foreach (var sub in dirs)
                 {
-                    var name = Path.GetFileName(sub);
-                    if (name.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase)
-                        || name.Equals("$RECYCLE.BIN", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (SystemFolder(sub)) continue;
                     pending.Push(sub);
                 }
             }
+        }
+
+        /// <summary>Dossiers système d'un lecteur, et jonctions (on ne suit jamais un lien).</summary>
+        internal static bool SystemFolder(string path)
+        {
+            var name = Path.GetFileName(path);
+            if (name.Equals("System Volume Information", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("$RECYCLE.BIN", StringComparison.OrdinalIgnoreCase)) return true;
+            try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
+            catch (IOException) { return true; }
+            catch (UnauthorizedAccessException) { return true; }
         }
 
         private static bool SameBytes(byte[] a, byte[] b)

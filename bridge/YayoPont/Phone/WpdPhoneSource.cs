@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Threading;
@@ -10,23 +11,44 @@ using YayoPont.Core;
 namespace YayoPont.Phone
 {
     /// <summary>
-    /// Le vrai téléphone, via Windows Portable Devices (ce qu'utilise l'Explorateur).
+    /// Les vrais téléphones, via Windows Portable Devices (ce qu'utilise l'Explorateur).
     /// Tous les appels COM passent par un seul thread : WPD n'aime pas les accès
     /// simultanés à un même appareil, et cela règle la question des apartments.
     /// Ouverture en lecture seule : le pont ne peut rien modifier sur le téléphone.
+    /// Plusieurs appareils peuvent être ouverts ; les lectures visent le téléphone
+    /// de la dernière analyse.
     /// </summary>
     internal sealed class WpdPhoneSource : IPhoneSource
     {
         private const int ErrorNotConnected = unchecked((int)0x8007048F);
 
+        private sealed class Opened
+        {
+            public IPortableDevice Device;
+            public PhoneInfo Info;
+        }
+
+        /// <summary>Ce qu'on retient d'un objet du téléphone avant de classer son dossier.</summary>
+        private struct Child
+        {
+            public string Id;
+            public string Name;
+            public bool Folder;
+            public long Size;
+            public DateTime? Date;
+        }
+
         private readonly BlockingCollection<Action> queue = new BlockingCollection<Action>();
         private readonly Thread worker;
         private readonly Dictionary<string, PhoneFile> known = new Dictionary<string, PhoneFile>();
 
+        // Uniquement sur le thread WPD.
+        private readonly Dictionary<string, Opened> opened = new Dictionary<string, Opened>(StringComparer.Ordinal);
+        // Appareils WPD qui ne sont pas des téléphones (clés USB en « MSC ») : pas rouverts à chaque sondage.
+        private readonly HashSet<string> notPhones = new HashSet<string>(StringComparer.Ordinal);
+        private List<string> order = new List<string>();
         private IPortableDeviceManager manager;
-        private IPortableDevice device;
-        private string deviceId;
-        private PhoneInfo deviceInfo;
+        private string currentId;
 
         public WpdPhoneSource()
         {
@@ -39,10 +61,10 @@ namespace YayoPont.Phone
             worker.Start();
         }
 
-        public PhoneInfo Detect() => Run(DetectOnWorker);
+        public IList<PhoneInfo> Phones() => Run(PhonesOnWorker);
 
-        public IList<PhoneFile> Enumerate(Action<PhoneFile> found, CancellationToken cancel) =>
-            Run(() => EnumerateOnWorker(found, cancel));
+        public IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel) =>
+            Run(() => EnumerateOnWorker(phoneId, found, cancel));
 
         public Stream OpenRead(string id) => Run(() =>
         {
@@ -69,13 +91,19 @@ namespace YayoPont.Phone
 
         public void Dispose()
         {
-            Run<object>(() => { CloseDevice(); return null; });
+            Run<object>(() =>
+            {
+                foreach (var id in opened.Keys.ToList()) Close(id);
+                return null;
+            });
             queue.CompleteAdding();
         }
 
         // ---------- exécuté sur le thread WPD ----------
 
-        private PhoneInfo DetectOnWorker()
+        private IPortableDevice Current => currentId != null && opened.TryGetValue(currentId, out var o) ? o.Device : null;
+
+        private IList<PhoneInfo> PhonesOnWorker()
         {
             Trace("detect: manager");
             if (manager == null) manager = Wpd.Create<IPortableDeviceManager>(Wpd.ClsidManager);
@@ -97,34 +125,40 @@ namespace YayoPont.Phone
                 }
             }
 
-            if (deviceId != null && !ids.Contains(deviceId)) CloseDevice();
-            if (deviceId != null)
-            {
-                try
-                {
-                    deviceInfo.State = HasStorage() ? "ready" : "locked";
-                    return deviceInfo;
-                }
-                catch (IOException)
-                {
-                    CloseDevice(); // débranché entre deux sondages : on repart de zéro
-                }
-            }
+            foreach (var gone in opened.Keys.Where(id => !ids.Contains(id)).ToList()) Close(gone);
+            notPhones.IntersectWith(ids);
 
+            var phones = new List<PhoneInfo>();
             foreach (var id in ids)
             {
+                if (notPhones.Contains(id)) continue;
+                if (opened.TryGetValue(id, out var already))
+                {
+                    try
+                    {
+                        already.Info.State = HasStorage(already.Device) ? "ready" : "locked";
+                        phones.Add(already.Info);
+                        continue;
+                    }
+                    catch (IOException)
+                    {
+                        Close(id); // débranché entre deux sondages : on repart de zéro
+                    }
+                }
                 try
                 {
                     var info = TryOpen(id);
-                    if (info != null) return info;
+                    if (info != null) phones.Add(info);
                 }
                 catch (COMException ex)
                 {
                     Log.Error("ouverture de l'appareil " + id, ex);
-                    CloseDevice();
+                    Close(id);
                 }
             }
-            return null;
+            order = phones.Select(p => p.Id).ToList();
+            if (currentId != null && !opened.ContainsKey(currentId)) currentId = null;
+            return phones;
         }
 
         private PhoneInfo TryOpen(string id)
@@ -134,44 +168,68 @@ namespace YayoPont.Phone
             Trace("open: créé");
             if (candidate.Open(id, ClientInfo()) < 0) { Release(candidate); return null; }
             Trace("open: ouvert");
-            if (!candidate.Content(out var content).Ok() || !content.Properties(out var props).Ok()) { Release(candidate); return null; }
+            if (!candidate.Content(out var content).Ok() || !content.Properties(out var props).Ok())
+            {
+                CloseQuietly(candidate);
+                return null;
+            }
             Trace("open: contenu et propriétés");
-            var values = Values(props, Wpd.DeviceObjectId, Wpd.DeviceProtocol, Wpd.DeviceFriendlyName, Wpd.DeviceManufacturer, Wpd.DeviceModel);
+            var values = Values(props, Wpd.DeviceObjectId, Keys(Wpd.DeviceProtocol, Wpd.DeviceFriendlyName, Wpd.DeviceManufacturer, Wpd.DeviceModel));
             Trace("open: valeurs " + (values != null));
             var protocol = String(values, Wpd.DeviceProtocol) ?? "";
             Trace("open: protocole " + protocol);
-            // Les clés USB apparaissent aussi dans WPD (protocole « MSC ») : on les écarte.
-            if (protocol.StartsWith("MSC", StringComparison.OrdinalIgnoreCase)) { Release(candidate); return null; }
-            device = candidate;
-            deviceId = id;
+            // Les clés USB apparaissent aussi dans WPD (protocole « MSC ») : on les écarte pour de bon.
+            if (protocol.StartsWith("MSC", StringComparison.OrdinalIgnoreCase))
+            {
+                CloseQuietly(candidate);
+                notPhones.Add(id);
+                return null;
+            }
             var name = String(values, Wpd.DeviceFriendlyName);
             if (string.IsNullOrWhiteSpace(name)) name = String(values, Wpd.DeviceModel) ?? FriendlyName(id) ?? "Téléphone";
-            deviceInfo = new PhoneInfo { Name = name, Manufacturer = String(values, Wpd.DeviceManufacturer) ?? "" };
+            var info = new PhoneInfo { Id = id, Name = name, Manufacturer = String(values, Wpd.DeviceManufacturer) ?? "" };
+            opened[id] = new Opened { Device = candidate, Info = info };
             Trace("open: stockage ?");
-            deviceInfo.State = HasStorage() ? "ready" : "locked";
-            Log.Info($"téléphone détecté : {deviceInfo.Manufacturer} {name} ({protocol})");
-            return deviceInfo;
+            info.State = HasStorage(candidate) ? "ready" : "locked";
+            Log.Info($"téléphone détecté : {info.Manufacturer} {name} ({protocol})");
+            return info;
         }
 
         /// <summary>
         /// Un Android verrouillé ou qui n'a pas encore « autorisé l'accès aux
         /// données » se montre, mais sans stockage.
         /// </summary>
-        private bool HasStorage()
+        private bool HasStorage(IPortableDevice device)
         {
-            try { return Children(Wpd.DeviceObjectId).Count > 0; }
+            try { return Children(device, Wpd.DeviceObjectId).Count > 0; }
             catch (COMException) { return false; }
         }
 
-        private IList<PhoneFile> EnumerateOnWorker(Action<PhoneFile> found, CancellationToken cancel)
+        /// <summary>Le téléphone des lectures : celui de la dernière analyse, sinon le premier branché.</summary>
+        private IPortableDevice CurrentOrFirst()
         {
-            if (device == null && DetectOnWorker() == null) throw new IOException("Aucun téléphone branché.");
+            if (Current != null) return Current;
+            PhonesOnWorker();
+            currentId = order.FirstOrDefault(opened.ContainsKey);
+            return Current;
+        }
+
+        private IList<PhoneFile> EnumerateOnWorker(string phoneId, Action<PhoneFile> found, CancellationToken cancel)
+        {
+            if (phoneId == null || !opened.ContainsKey(phoneId)) PhonesOnWorker();
+            var chosen = phoneId ?? order.FirstOrDefault(opened.ContainsKey);
+            if (chosen == null) throw new IOException("Aucun téléphone branché.");
+            if (!opened.ContainsKey(chosen)) throw new IOException("Ce téléphone n'est plus branché.");
+            currentId = chosen;
+            var device = Current;
             Check(device.Content(out var content));
             Check(content.Properties(out var props));
+            var keys = Keys(Wpd.ObjectOriginalFileName, Wpd.ObjectName, Wpd.ObjectContentType,
+                Wpd.ObjectSize, Wpd.ObjectDateCreated, Wpd.ObjectDateModified);
             var files = new List<PhoneFile>();
-            foreach (var storage in Children(Wpd.DeviceObjectId))
+            foreach (var storage in Children(device, Wpd.DeviceObjectId))
             {
-                Walk(storage, "", 0);
+                Walk(storage, "", 0, false);
             }
             lock (known)
             {
@@ -180,41 +238,55 @@ namespace YayoPont.Phone
             }
             return files;
 
-            void Walk(string parent, string relative, int depth)
+            void Walk(string parent, string relative, int depth, bool parentHidden)
             {
-                foreach (var id in Children(parent))
+                // Tous les enfants d'abord : le « .nomedia » peut venir après les photos.
+                var children = new List<Child>();
+                foreach (var id in Children(device, parent))
                 {
                     cancel.ThrowIfCancellationRequested();
-                    var values = Values(props, id, Wpd.ObjectOriginalFileName, Wpd.ObjectName, Wpd.ObjectContentType,
-                        Wpd.ObjectSize, Wpd.ObjectDateCreated, Wpd.ObjectDateModified);
+                    var values = Values(props, id, keys);
                     if (values == null) continue;
-                    var name = String(values, Wpd.ObjectOriginalFileName) ?? String(values, Wpd.ObjectName) ?? id;
                     var type = Guid(values, Wpd.ObjectContentType);
-                    if (type == Wpd.ContentTypeFolder || type == Wpd.ContentTypeFunctionalObject)
-                    {
-                        if (depth >= MediaRules.MaxDepth || MediaRules.SkipFolder(name, relative)) continue;
-                        Walk(id, relative.Length == 0 ? name : relative + "/" + name, depth + 1);
-                        continue;
-                    }
-                    var kind = MediaRules.Kind(name);
-                    if (kind == null) continue;
-                    var rel = relative.Length == 0 ? name : relative + "/" + name;
-                    files.Add(new PhoneFile
+                    children.Add(new Child
                     {
                         Id = id,
-                        Name = name,
-                        RelativePath = rel,
+                        Name = String(values, Wpd.ObjectOriginalFileName) ?? String(values, Wpd.ObjectName) ?? id,
+                        Folder = type == Wpd.ContentTypeFolder || type == Wpd.ContentTypeFunctionalObject,
                         Size = (long)ULong(values, Wpd.ObjectSize),
                         Date = Date(values, Wpd.ObjectDateCreated) ?? Date(values, Wpd.ObjectDateModified),
+                    });
+                    Release(values);
+                }
+                bool hidden = GalleryRules.FolderHidden(parentHidden, relative, children.Where(c => !c.Folder).Select(c => c.Name));
+                foreach (var child in children)
+                {
+                    if (child.Folder)
+                    {
+                        if (depth >= MediaRules.MaxDepth || MediaRules.SkipFolder(child.Name, relative)) continue;
+                        Walk(child.Id, relative.Length == 0 ? child.Name : relative + "/" + child.Name, depth + 1, hidden);
+                        continue;
+                    }
+                    var kind = MediaRules.Kind(child.Name);
+                    if (kind == null) continue;
+                    var rel = relative.Length == 0 ? child.Name : relative + "/" + child.Name;
+                    files.Add(new PhoneFile
+                    {
+                        Id = child.Id,
+                        Name = child.Name,
+                        RelativePath = rel,
+                        Size = child.Size,
+                        Date = child.Date,
                         Kind = kind,
                         Source = MediaRules.Source(rel),
+                        Hidden = hidden || MediaRules.HiddenFile(child.Name),
                     });
                     found(files[files.Count - 1]);
                 }
             }
         }
 
-        private List<string> Children(string parent)
+        private List<string> Children(IPortableDevice device, string parent)
         {
             Check(device.Content(out var content));
             var ids = new List<string>();
@@ -238,7 +310,8 @@ namespace YayoPont.Phone
         private IStream OpenResource(string id, PropertyKey resource, out uint bufferSize)
         {
             bufferSize = 0;
-            if (device == null && DetectOnWorker() == null) throw new IOException("Aucun téléphone branché.");
+            var device = CurrentOrFirst();
+            if (device == null) throw new IOException("Aucun téléphone branché.");
             Check(device.Content(out var content));
             Check(content.Transfer(out var resources));
             var key = resource;
@@ -291,16 +364,18 @@ namespace YayoPont.Phone
             return output.ToArray();
         }
 
-        private void CloseDevice()
+        private void Close(string id)
         {
-            if (device != null)
-            {
-                try { device.Close(); } catch (COMException) { }
-                Release(device);
-            }
-            device = null;
-            deviceId = null;
-            deviceInfo = null;
+            if (opened.TryGetValue(id, out var o)) CloseQuietly(o.Device);
+            opened.Remove(id);
+            if (currentId == id) currentId = null;
+        }
+
+        private static void CloseQuietly(IPortableDevice device)
+        {
+            if (device == null) return;
+            try { device.Close(); } catch (COMException) { }
+            Release(device);
         }
 
         private string FriendlyName(string id)
@@ -324,14 +399,15 @@ namespace YayoPont.Phone
             var info = Wpd.Create<IPortableDeviceValues>(Wpd.ClsidValues);
             var k = Wpd.ClientName; info.SetStringValue(ref k, "Pont Yayo");
             k = Wpd.ClientMajorVersion; info.SetUnsignedIntegerValue(ref k, 1);
-            k = Wpd.ClientMinorVersion; info.SetUnsignedIntegerValue(ref k, 0);
+            k = Wpd.ClientMinorVersion; info.SetUnsignedIntegerValue(ref k, 1);
             k = Wpd.ClientRevision; info.SetUnsignedIntegerValue(ref k, 0);
             k = Wpd.ClientSecurityQos; info.SetUnsignedIntegerValue(ref k, Wpd.SecurityImpersonation);
             k = Wpd.ClientDesiredAccess; info.SetUnsignedIntegerValue(ref k, Wpd.GenericRead);
             return info;
         }
 
-        private static IPortableDeviceValues Values(IPortableDeviceProperties props, string objectId, params PropertyKey[] keys)
+        /// <summary>Collection de clés de propriétés (seulement lue par WPD : réutilisable).</summary>
+        private static IPortableDeviceKeyCollection Keys(params PropertyKey[] keys)
         {
             var collection = Wpd.Create<IPortableDeviceKeyCollection>(Wpd.ClsidKeyCollection);
             foreach (var key in keys)
@@ -339,8 +415,11 @@ namespace YayoPont.Phone
                 var k = key;
                 collection.Add(ref k);
             }
-            return props.GetValues(objectId, collection, out var values) < 0 ? null : values;
+            return collection;
         }
+
+        private static IPortableDeviceValues Values(IPortableDeviceProperties props, string objectId, IPortableDeviceKeyCollection keys) =>
+            props.GetValues(objectId, keys, out var values) < 0 ? null : values;
 
         private static string String(IPortableDeviceValues values, PropertyKey key)
         {

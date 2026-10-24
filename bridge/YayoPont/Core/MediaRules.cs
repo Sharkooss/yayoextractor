@@ -41,6 +41,30 @@ namespace YayoPont.Core
             return "other";
         }
 
+        /// <summary>Fichier qui cache son dossier (et ses sous-dossiers) à la Galerie.</summary>
+        public static bool IsNoMedia(string fileName) => string.Equals(fileName, ".nomedia", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Dossier « Sent » d'un chemin WhatsApp : copies (recompressées) de ce
+        /// qu'on a envoyé, que la Galerie ne montre pas.
+        /// </summary>
+        public static bool HiddenFolder(string relativePath)
+        {
+            var path = (relativePath ?? "").Replace('\\', '/');
+            if (path.IndexOf("whatsapp", StringComparison.OrdinalIgnoreCase) < 0) return false;
+            foreach (var part in path.Split('/'))
+            {
+                if (part.Equals("Sent", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Fichier masqué (« .trashed-…-IMG.jpg » de la corbeille Android, « .pending-… ») :
+        /// la Galerie ne le montre pas non plus.
+        /// </summary>
+        public static bool HiddenFile(string fileName) => (fileName ?? "").StartsWith(".");
+
         /// <summary>
         /// Dossiers à ne pas parcourir : cachés (vignettes, corbeille), données
         /// d'applications, caches et stickers. Android/media reste parcouru,

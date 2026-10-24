@@ -10,11 +10,15 @@ namespace YayoPont.Phone
 {
     internal interface IPhoneSource : IDisposable
     {
-        /// <summary>Le téléphone branché, ou null.</summary>
-        PhoneInfo Detect();
+        /// <summary>Tous les téléphones branchés (liste vide s'il n'y en a pas).</summary>
+        IList<PhoneInfo> Phones();
 
-        /// <summary>Tous les médias, en appelant <paramref name="found"/> au fil de l'eau.</summary>
-        IList<PhoneFile> Enumerate(Action<PhoneFile> found, CancellationToken cancel);
+        /// <summary>
+        /// Tous les médias du téléphone <paramref name="phoneId"/> (null = le premier),
+        /// en appelant <paramref name="found"/> au fil de l'eau. Ce téléphone devient
+        /// celui des lectures suivantes (OpenRead, Thumbnail).
+        /// </summary>
+        IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel);
 
         Stream OpenRead(string id);
 
@@ -23,6 +27,26 @@ namespace YayoPont.Phone
 
         /// <summary>Un téléphone est branché en USB mais n'expose pas ses fichiers (simple recharge).</summary>
         bool UsbSeen();
+    }
+
+    internal static class PhoneSourceExtensions
+    {
+        /// <summary>Le premier téléphone branché, ou null.</summary>
+        public static PhoneInfo Detect(this IPhoneSource source) => source.Phones().FirstOrDefault();
+
+        public static IList<PhoneFile> Enumerate(this IPhoneSource source, Action<PhoneFile> found, CancellationToken cancel) =>
+            source.Enumerate(null, found, cancel);
+    }
+
+    /// <summary>
+    /// Ce que la Galerie montre d'un dossier : on regarde ses fichiers avant de
+    /// classer ses médias, car un « .nomedia » cache tout le dossier et ses
+    /// sous-dossiers (WPD et le système de fichiers ne le listent pas en premier).
+    /// </summary>
+    internal static class GalleryRules
+    {
+        public static bool FolderHidden(bool parentHidden, string relativePath, IEnumerable<string> fileNames) =>
+            parentHidden || MediaRules.HiddenFolder(relativePath) || fileNames.Any(MediaRules.IsNoMedia);
     }
 
     /// <summary>Un appareil USB d'un fabricant de téléphones est branché (même en simple recharge).</summary>
@@ -90,43 +114,70 @@ namespace YayoPont.Phone
     }
 
     /// <summary>
-    /// Mode simulation : un dossier joue le téléphone. À sa racine, un fichier
-    /// « VERROUILLE » simule un téléphone verrouillé, « RECHARGE » un téléphone
-    /// branché en simple recharge.
+    /// Mode simulation : un dossier joue le téléphone (plusieurs dossiers =
+    /// plusieurs téléphones). À sa racine, un fichier « VERROUILLE » simule un
+    /// téléphone verrouillé, « RECHARGE » un téléphone branché en simple recharge.
     /// </summary>
     internal sealed class FolderPhoneSource : IPhoneSource
     {
-        private readonly string root;
+        private readonly string[] roots;
         private readonly int bytesPerSecond;
+        private volatile string root;
 
         /// <param name="bytesPerSecond">0 = pleine vitesse ; sinon simule le débit d'un vrai téléphone.</param>
-        public FolderPhoneSource(string root, int bytesPerSecond = 0)
+        public FolderPhoneSource(string root, int bytesPerSecond = 0) : this(new[] { root }, bytesPerSecond) { }
+
+        public FolderPhoneSource(IEnumerable<string> roots, int bytesPerSecond = 0)
         {
-            this.root = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar);
+            this.roots = roots.Select(r => Path.GetFullPath(r).TrimEnd(Path.DirectorySeparatorChar)).ToArray();
+            if (this.roots.Length == 0) throw new ArgumentException("Au moins un dossier de téléphone simulé.");
             this.bytesPerSecond = bytesPerSecond;
+            root = this.roots[0];
         }
 
-        public PhoneInfo Detect()
+        private static string PhoneId(int index) => "test-" + (index + 1);
+
+        public IList<PhoneInfo> Phones()
         {
-            if (!Directory.Exists(root) || UsbSeen()) return null;
-            return new PhoneInfo
+            var phones = new List<PhoneInfo>();
+            for (int i = 0; i < roots.Length; i++)
             {
-                Name = "Téléphone de test",
-                Manufacturer = "Simulation",
-                State = File.Exists(Path.Combine(root, "VERROUILLE")) ? "locked" : "ready",
-            };
+                var dir = roots[i];
+                if (!Directory.Exists(dir) || File.Exists(Path.Combine(dir, "RECHARGE"))) continue;
+                phones.Add(new PhoneInfo
+                {
+                    Id = PhoneId(i),
+                    Name = roots.Length == 1 ? "Téléphone de test" : $"Téléphone de test {i + 1} ({Path.GetFileName(dir)})",
+                    Manufacturer = "Simulation",
+                    State = File.Exists(Path.Combine(dir, "VERROUILLE")) ? "locked" : "ready",
+                });
+            }
+            return phones;
         }
 
-        public IList<PhoneFile> Enumerate(Action<PhoneFile> found, CancellationToken cancel)
+        public IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel)
         {
+            if (phoneId != null)
+            {
+                int index = -1;
+                for (int i = 0; i < roots.Length; i++) if (PhoneId(i) == phoneId) index = i;
+                if (index < 0 || !Directory.Exists(roots[index])) throw new IOException("Ce téléphone n'est plus branché.");
+                root = roots[index];
+            }
+            else
+            {
+                root = roots.FirstOrDefault(Directory.Exists) ?? throw new IOException("Aucun téléphone branché.");
+            }
             var files = new List<PhoneFile>();
-            Walk(root, "", 0);
+            Walk(root, "", 0, false);
             return files;
 
-            void Walk(string dir, string relative, int depth)
+            void Walk(string dir, string relative, int depth, bool parentHidden)
             {
                 cancel.ThrowIfCancellationRequested();
-                foreach (var file in Directory.GetFiles(dir))
+                var children = Directory.GetFiles(dir);
+                bool hidden = GalleryRules.FolderHidden(parentHidden, relative, children.Select(Path.GetFileName));
+                foreach (var file in children)
                 {
                     var name = Path.GetFileName(file);
                     var kind = MediaRules.Kind(name);
@@ -142,6 +193,7 @@ namespace YayoPont.Phone
                         Date = info.LastWriteTime,
                         Kind = kind,
                         Source = MediaRules.Source(rel),
+                        Hidden = hidden || MediaRules.HiddenFile(name),
                     });
                     found(files[files.Count - 1]);
                 }
@@ -150,7 +202,7 @@ namespace YayoPont.Phone
                 {
                     var name = Path.GetFileName(sub);
                     if (MediaRules.SkipFolder(name, relative)) continue;
-                    Walk(sub, relative.Length == 0 ? name : relative + "/" + name, depth + 1);
+                    Walk(sub, relative.Length == 0 ? name : relative + "/" + name, depth + 1, hidden);
                 }
             }
         }
@@ -166,12 +218,13 @@ namespace YayoPont.Phone
             using (var stream = OpenRead(id)) return Thumbnails.FromStream(stream, id);
         }
 
-        public bool UsbSeen() => File.Exists(Path.Combine(root, "RECHARGE"));
+        public bool UsbSeen() => roots.Any(r => File.Exists(Path.Combine(r, "RECHARGE")));
 
         public void Dispose() { }
 
         private string Resolve(string id)
         {
+            var root = this.root;
             var path = Path.GetFullPath(Path.Combine(root, (id ?? "").Replace('/', Path.DirectorySeparatorChar)));
             if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
                 throw new FileNotFoundException("Fichier introuvable sur le téléphone.", id);

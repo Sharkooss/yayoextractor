@@ -34,8 +34,11 @@ namespace YayoPont.Setup
 
         public static string Version => Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
 
-        /// <summary>Installe (ou met à jour), lance le pont en arrière-plan et ouvre le site.</summary>
-        public static void Install()
+        /// <summary>
+        /// Installe (ou met à jour), lance le pont en arrière-plan et ouvre le site
+        /// (pas pour une mise à jour automatique : <paramref name="openSite"/> = false).
+        /// </summary>
+        public static void Install(bool openSite = true)
         {
             StopRunning();
             Directory.CreateDirectory(InstallDir);
@@ -44,7 +47,19 @@ namespace YayoPont.Setup
             var bytes = File.ReadAllBytes(CurrentExe);
             var temp = InstalledExe + ".new";
             File.WriteAllBytes(temp, bytes);
-            if (File.Exists(InstalledExe)) File.Delete(InstalledExe);
+            // L'ancienne instance peut mettre un instant à rendre son exe après avoir libéré le mutex.
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(InstalledExe)) File.Delete(InstalledExe);
+                    break;
+                }
+                catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && attempt < 40)
+                {
+                    Thread.Sleep(250);
+                }
+            }
             File.Move(temp, InstalledExe);
 
             using (var run = Registry.CurrentUser.CreateSubKey(RunKey))
@@ -65,7 +80,7 @@ namespace YayoPont.Setup
             }
             Log.Info("installé en version " + Version);
             Process.Start(new ProcessStartInfo(InstalledExe, "--background") { UseShellExecute = false, WorkingDirectory = InstallDir });
-            OpenSite();
+            if (openSite) OpenSite();
         }
 
         public static void Uninstall(bool silent)

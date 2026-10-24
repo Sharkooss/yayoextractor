@@ -9,19 +9,20 @@ namespace YayoPont.Drives
 {
     internal interface IDriveProvider
     {
-        IList<DriveDto> List();
+        /// <param name="all">aussi les disques fixes non système (mode avancé).</param>
+        IList<DriveDto> List(bool all = false);
         bool Eject(string id, out string message);
     }
 
     internal static class DriveActions
     {
         public static DriveDto Find(this IDriveProvider provider, string id) =>
-            provider.List().FirstOrDefault(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase));
+            provider.List(true).FirstOrDefault(d => string.Equals(d.Id, id, StringComparison.OrdinalIgnoreCase));
 
-        /// <summary>Ouvre l'Explorateur sur « Photos du téléphone » (créé au besoin).</summary>
-        public static void Open(DriveDto drive)
+        /// <summary>Ouvre l'Explorateur sur le dossier racine géré (créé au besoin).</summary>
+        public static void Open(Target target)
         {
-            var folder = Destination.Root(drive.Root);
+            var folder = target.ManagedRoot;
             Directory.CreateDirectory(folder);
             Process.Start(new ProcessStartInfo("explorer.exe", "\"" + folder + "\"") { UseShellExecute = true });
         }
@@ -33,7 +34,7 @@ namespace YayoPont.Drives
     /// </summary>
     internal sealed class RealDriveProvider : IDriveProvider
     {
-        public IList<DriveDto> List()
+        public IList<DriveDto> List(bool all = false)
         {
             var system = Path.GetPathRoot(Environment.SystemDirectory);
             var drives = new List<DriveDto>();
@@ -48,12 +49,14 @@ namespace YayoPont.Drives
                     bool usb = info.DriveType == DriveType.Removable;
                     if (!usb && info.DriveType == DriveType.Fixed) usb = Native.IsUsbVolume(letter, out product);
                     else if (usb) Native.IsUsbVolume(letter, out product);
-                    if (!usb) continue;
+                    bool fixedDisk = !usb && all && info.DriveType == DriveType.Fixed;
+                    if (!usb && !fixedDisk) continue;
                     drives.Add(new DriveDto
                     {
                         Id = letter,
                         Letter = letter + ":",
-                        Label = !string.IsNullOrWhiteSpace(info.VolumeLabel) ? info.VolumeLabel : (product ?? "Clé USB"),
+                        Label = !string.IsNullOrWhiteSpace(info.VolumeLabel) ? info.VolumeLabel : (product ?? (usb ? "Clé USB" : "Disque local")),
+                        Kind = usb ? "usb" : "fixed",
                         Fs = info.DriveFormat,
                         TotalBytes = info.TotalSize,
                         FreeBytes = info.AvailableFreeSpace,
@@ -81,7 +84,7 @@ namespace YayoPont.Drives
             Directory.CreateDirectory(this.root);
         }
 
-        public IList<DriveDto> List()
+        public IList<DriveDto> List(bool all = false)
         {
             if (ejected) return new List<DriveDto>();
             var host = new DriveInfo(Path.GetPathRoot(root));
