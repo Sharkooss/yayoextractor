@@ -213,7 +213,162 @@ namespace YayoPont.Core
         public static double? Duration(string path) =>
             TryDuration(ReadMoov(path), out var seconds) ? seconds : (double?)null;
 
-        private static readonly Regex Iso6709 = new Regex(@"^([+-]\d{1,2}(?:\.\d+)?)([+-]\d{1,3}(?:\.\d+)?)", RegexOptions.CultureInvariant);
+        /// <summary>Ce qu'il faut savoir d'une vidéo pour la comparer à une autre.</summary>
+        internal sealed class VideoFacts
+        {
+            public double? Duration;
+            public double? VideoDuration;
+            public double? AudioDuration;
+
+            /// <summary>Dimensions d'affichage (rotation de la matrice appliquée), 0 si inconnues.</summary>
+            public int Width;
+            public int Height;
+
+            /// <summary>Rotation d'affichage de la piste vidéo (0, 90, 180, 270), lue dans la matrice de tkhd.</summary>
+            public int Rotation;
+
+            /// <summary>Clip de Live Photo iPhone (métadonnées QuickTime).</summary>
+            public bool AppleLive;
+        }
+
+        private static readonly HashSet<string> Containers = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "moov", "trak", "mdia", "minf", "stbl", "udta", "edts", "dinf",
+        };
+
+        private static readonly Encoding Latin1 = Encoding.GetEncoding(28591);
+
+        public static VideoFacts Facts(byte[] moov)
+        {
+            if (moov == null) return null;
+            var facts = new VideoFacts();
+            if (TryDuration(moov, out var seconds)) facts.Duration = seconds;
+            try
+            {
+                foreach (var trak in Boxes(moov, 0, moov.Length))
+                {
+                    if (trak.type != "trak") continue;
+                    string handler = null;
+                    double? duration = null;
+                    int width = 0, height = 0, rotation = 0;
+                    foreach (var box in Boxes(moov, trak.payload, trak.end))
+                    {
+                        if (box.type == "tkhd") TrackSize(moov, box.payload, box.end, out width, out height, out rotation);
+                        if (box.type != "mdia") continue;
+                        foreach (var inner in Boxes(moov, box.payload, box.end))
+                        {
+                            if (inner.type == "hdlr" && inner.payload + 12 <= inner.end) handler = Encoding.ASCII.GetString(moov, inner.payload + 8, 4);
+                            if (inner.type == "mdhd") duration = MediaDuration(moov, inner.payload, inner.end);
+                        }
+                    }
+                    if (handler == "vide" && facts.Width == 0)
+                    {
+                        facts.Width = width;
+                        facts.Height = height;
+                        facts.Rotation = rotation;
+                        facts.VideoDuration = duration;
+                    }
+                    else if (handler == "soun" && facts.AudioDuration == null) facts.AudioDuration = duration;
+                }
+            }
+            catch (IndexOutOfRangeException) { }
+            catch (ArgumentException) { }
+            facts.AppleLive = IsAppleLive(moov);
+            return facts;
+        }
+
+        /// <summary>Largeur et hauteur de tkhd (16.16), échangées si la matrice tourne de 90° ou 270°.</summary>
+        private static void TrackSize(byte[] b, int p, int end, out int width, out int height, out int rotation)
+        {
+            width = height = rotation = 0;
+            int version = b[p];
+            int matrix = p + 4 + (version == 1 ? 32 : 20) + 16;
+            if (matrix + 44 > end) return;
+            long a = (int)U32(b, matrix), bb = (int)U32(b, matrix + 4);
+            width = (int)(U32(b, matrix + 36) >> 16);
+            height = (int)(U32(b, matrix + 40) >> 16);
+            long d = (int)U32(b, matrix + 16);
+            if (a == 0 && bb > 0) rotation = 90;
+            else if (a == 0 && bb < 0) rotation = 270;
+            else if (a < 0 && d < 0) rotation = 180;
+            if (a == 0 && bb != 0)
+            {
+                int t = width;
+                width = height;
+                height = t;
+            }
+        }
+
+        private static double? MediaDuration(byte[] b, int p, int end)
+        {
+            int version = b[p];
+            long timescale, duration;
+            if (version == 1)
+            {
+                if (p + 32 > end) return null;
+                timescale = U32(b, p + 20);
+                duration = (long)U64(b, p + 24);
+            }
+            else
+            {
+                if (p + 20 > end) return null;
+                timescale = U32(b, p + 12);
+                duration = U32(b, p + 16);
+            }
+            return timescale > 0 ? duration / (double)timescale : (double?)null;
+        }
+
+        /// <summary>
+        /// Clip de Live Photo : clé QuickTime (mdta/keys/ilst) « com.apple.quicktime.content.identifier »
+        /// ou contenant « live-photo » (aussi dans la piste de métadonnées, boîtes mebx/keyd).
+        /// </summary>
+        public static bool IsAppleLive(byte[] moov)
+        {
+            if (moov == null) return false;
+            foreach (var key in QuickTimeKeys(moov, 0, moov.Length, 0))
+            {
+                if (IsLiveKey(key)) return true;
+            }
+            var text = Latin1.GetString(moov);
+            return text.IndexOf("com.apple.quicktime.content.identifier", StringComparison.Ordinal) >= 0
+                || text.IndexOf("com.apple.quicktime.live-photo", StringComparison.Ordinal) >= 0;
+        }
+
+        private static bool IsLiveKey(string key) =>
+            key == "com.apple.quicktime.content.identifier" || key.IndexOf("live-photo", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        /// <summary>Les noms des clés « keys » (QuickTime : meta n'est pas toujours une boîte pleine).</summary>
+        private static IEnumerable<string> QuickTimeKeys(byte[] b, int from, int to, int depth)
+        {
+            if (depth > 8) yield break;
+            foreach (var box in Boxes(b, from, to))
+            {
+                if (Containers.Contains(box.type))
+                {
+                    foreach (var key in QuickTimeKeys(b, box.payload, box.end, depth + 1)) yield return key;
+                }
+                else if (box.type == "meta")
+                {
+                    // MP4 : version + drapeaux d'abord ; QuickTime : directement les boîtes.
+                    int start = box.payload + 8 <= box.end && Type(b, box.payload + 4) == null && box.payload + 12 <= box.end ? box.payload + 4 : box.payload;
+                    foreach (var key in QuickTimeKeys(b, start, box.end, depth + 1)) yield return key;
+                }
+                else if (box.type == "keys" && box.payload + 8 <= box.end)
+                {
+                    long count = U32(b, box.payload + 4);
+                    int p = box.payload + 8;
+                    for (long k = 0; k < count && p + 8 <= box.end; k++)
+                    {
+                        long size = U32(b, p);
+                        if (size < 8 || p + size > box.end) break;
+                        yield return Encoding.UTF8.GetString(b, p + 8, (int)size - 8);
+                        p += (int)size;
+                    }
+                }
+            }
+        }
+
+        private static readonly Regex Iso6709 =new Regex(@"^([+-]\d{1,2}(?:\.\d+)?)([+-]\d{1,3}(?:\.\d+)?)", RegexOptions.CultureInvariant);
         private static readonly Regex Iso6709Anywhere = new Regex(@"([+-]\d{1,2}\.\d+)([+-]\d{1,3}\.\d+)(?:[+-]\d+(?:\.\d+)?)?/", RegexOptions.CultureInvariant);
 
         /// <summary>Position GPS : udta/©xyz (Android), sinon la clé ISO6709 des vidéos Apple.</summary>

@@ -34,6 +34,17 @@ namespace YayoPont.Core
         public double? Lat;
         public double? Lon;
 
+        /// <summary>Orientation EXIF (1 à 8), 1 si absente.</summary>
+        public int Orientation = 1;
+
+        /// <summary>Vignette JPEG (IFD1) : position et longueur dans les octets lus, -1 si absente ou hors de la tête.</summary>
+        public int ThumbOffset = -1;
+        public int ThumbLength;
+
+        /// <summary>Dimensions de l'image principale annoncées par l'EXIF, 0 si inconnues.</summary>
+        public int PixelWidth;
+        public int PixelHeight;
+
         public static ExifInfo Read(byte[] head)
         {
             var info = new ExifInfo();
@@ -227,17 +238,31 @@ namespace YayoPont.Core
             int exifIfd = -1, gpsIfd = -1;
             foreach (var (tag, valueAt) in Entries(ifd0))
             {
-                if (tag == DateTimeTag) fallback = Ascii(Offset(U32(valueAt)));
+                if (tag == 0x0112) Orientation = U16(valueAt) >= 1 && U16(valueAt) <= 8 ? U16(valueAt) : 1;
+                else if (tag == DateTimeTag) fallback = Ascii(Offset(U32(valueAt)));
                 else if (tag == ExifIfdPointer) exifIfd = Offset(U32(valueAt));
                 else if (tag == GpsIfdPointer) gpsIfd = Offset(U32(valueAt));
             }
             foreach (var (tag, valueAt) in Entries(exifIfd))
             {
-                if ((tag == DateTimeOriginal || tag == DateTimeDigitized) && Parse(Ascii(Offset(U32(valueAt))), out var date))
-                {
-                    Date = date;
-                    break;
-                }
+                if ((tag == DateTimeOriginal || tag == DateTimeDigitized) && Date == null && Parse(Ascii(Offset(U32(valueAt))), out var date)) Date = date;
+                else if (tag == 0xA002) PixelWidth = (int)Value(valueAt);
+                else if (tag == 0xA003) PixelHeight = (int)Value(valueAt);
+            }
+
+            // IFD1 : la vignette JPEG.
+            int ifd1 = ifd0 >= 0 && ifd0 + 2 <= end ? ifd0 + 2 + U16(ifd0) * 12 : -1;
+            ifd1 = ifd1 >= 0 && ifd1 + 4 <= end ? Offset(U32(ifd1)) : -1;
+            long thumbAt = -1, thumbLength = 0;
+            foreach (var (tag, valueAt) in Entries(ifd1))
+            {
+                if (tag == 0x0201) thumbAt = U32(valueAt);
+                else if (tag == 0x0202) thumbLength = U32(valueAt);
+            }
+            if (thumbAt > 0 && thumbLength > 0 && tiff + thumbAt + thumbLength <= end)
+            {
+                ThumbOffset = (int)(tiff + thumbAt);
+                ThumbLength = (int)thumbLength;
             }
             if (Date == null && Parse(fallback, out var dateTime)) Date = dateTime;
 
@@ -263,6 +288,9 @@ namespace YayoPont.Core
                     Lon = lo;
                 }
             }
+
+            // SHORT ou LONG selon le type de l'entrée (le type est 8 octets avant la valeur).
+            long Value(int valueAt) => U16(valueAt - 6) == 3 ? U16(valueAt) : U32(valueAt);
 
             int Offset(long relative) => relative <= 0 || relative > end ? -1 : (int)(tiff + relative);
 

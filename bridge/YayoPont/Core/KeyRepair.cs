@@ -7,7 +7,7 @@ using System.Threading;
 
 namespace YayoPont.Core
 {
-    /// <summary>Bilan de « Ranger la clé », renvoyé avec l'état de la copie.</summary>
+    /// <summary>Bilan de « Ranger la clé », renvoyé avec l'état de l'analyse et de la copie.</summary>
     internal sealed class RepairReport
     {
         public int Duplicates { get; set; }
@@ -15,41 +15,66 @@ namespace YayoPont.Core
         public int LiveRemoved { get; set; }
         public int BrokenRemoved { get; set; }
         public int PartsRemoved { get; set; }
+        public int SentRemoved { get; set; }
         public long BytesFreed { get; set; }
 
         /// <summary>Dossiers où un fichier a été supprimé.</summary>
         internal readonly HashSet<string> Touched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        internal bool Changed => Duplicates + MotionStripped + LiveRemoved + BrokenRemoved + PartsRemoved > 0;
+        internal bool Changed => Duplicates + MotionStripped + LiveRemoved + BrokenRemoved + PartsRemoved + SentRemoved > 0;
+    }
+
+    /// <summary>Ce que le rangement sait du téléphone et de ce qu'on lui demande.</summary>
+    internal sealed class RepairContext
+    {
+        /// <summary>Raccourcir les photos animées (et retirer leurs clips si <see cref="RemoveLive"/>).</summary>
+        public bool StripMotion = true;
+        public bool RemoveLive = true;
+
+        /// <summary>Le dossier géré est à nous (sinon seuls les dossiers vidés par le rangement sont retirés).</summary>
+        public bool OwnRoot = true;
+
+        /// <summary>Noms des fichiers du téléphone recopiés ensuite : leurs vidéos incomplètes sur la clé sont retirées.</summary>
+        public ISet<string> BrokenNames;
+
+        /// <summary>La liste du téléphone (analyse), ou null.</summary>
+        public IList<PhoneFile> Phone;
+    }
+
+    /// <summary>Un fichier du dossier géré.</summary>
+    internal sealed class RepairFile
+    {
+        public string Path;
+        public long Size;
+        public DateTime Date;
+        public string Name => System.IO.Path.GetFileName(Path);
+        public string Folder => System.IO.Path.GetDirectoryName(Path);
     }
 
     /// <summary>
-    /// « Ranger la clé » avant chaque copie, dans le dossier racine géré seulement :
-    /// restes de copies interrompues, doublons exacts, photos animées raccourcies,
-    /// clips de photos animées, vidéos incomplètes qui vont être recopiées,
-    /// dossiers vides. Les copies « Sent » de WhatsApp déjà présentes restent :
-    /// rien ne prouve que l'original est sur la clé.
+    /// « Ranger la clé », dans le dossier racine géré seulement, au début de
+    /// l'analyse et de la copie : restes de copies interrompues, photos animées
+    /// raccourcies, doublons exacts, clips de photos animées, vidéos incomplètes
+    /// qui vont être recopiées, copies WhatsApp « Sent » dont l'original est sur
+    /// la clé, dossiers vides.
     /// </summary>
     internal static class KeyRepair
     {
         public const double LiveMaxSeconds = 4;
+        public const long LiveMaxBytes = 12L * 1024 * 1024;
+        public static readonly TimeSpan LiveMaxGap = TimeSpan.FromMinutes(2);
         public const string RepairSuffix = ".yayo-repare";
         private const long MaxPhotoBytes = 256L * 1024 * 1024;
 
-        private sealed class Entry
-        {
-            public string Path;
-            public long Size;
-            public string Name => System.IO.Path.GetFileName(Path);
-            public string Folder => System.IO.Path.GetDirectoryName(Path);
-        }
+        /// <summary>Forme 1.1.0, gardée pour les appels simples.</summary>
+        public static RepairReport Run(string managedRoot, bool stripMotion, bool removeLive, ISet<string> namesInCopy, CancellationToken cancel, bool ownRoot = true) =>
+            Run(managedRoot, new RepairContext { StripMotion = stripMotion, RemoveLive = removeLive, BrokenNames = namesInCopy, OwnRoot = ownRoot }, cancel);
 
-        /// <param name="stripMotion">raccourcir les photos animées (et retirer leurs clips si <paramref name="removeLive"/>).</param>
-        /// <param name="namesInCopy">noms des fichiers du téléphone copiés juste après (vidéos incomplètes à remplacer).</param>
-        public static RepairReport Run(string managedRoot, bool stripMotion, bool removeLive, ISet<string> namesInCopy, CancellationToken cancel, bool ownRoot = true)
+        public static RepairReport Run(string managedRoot, RepairContext context, CancellationToken cancel)
         {
             var report = new RepairReport();
             if (string.IsNullOrEmpty(managedRoot) || !Directory.Exists(managedRoot)) return report;
+            context = context ?? new RepairContext();
             var root = Path.GetFullPath(managedRoot).TrimEnd('\\') + "\\";
             var files = List(root);
 
@@ -72,7 +97,7 @@ namespace YayoPont.Core
                         else
                         {
                             File.Move(file.Path, original);
-                            files.Add(new Entry { Path = original, Size = file.Size });
+                            files.Add(new RepairFile { Path = original, Size = file.Size, Date = file.Date });
                         }
                     }
                     catch (IOException ex) { Log.Error("rangement : " + file.Path, ex); }
@@ -82,81 +107,48 @@ namespace YayoPont.Core
 
             var media = files.Where(f => MediaRules.Kind(f.Name) != null).ToList();
 
-            // 2. Doublons exacts : même taille, puis même SHA-256 complet.
-            foreach (var sameSize in media.Where(f => f.Size > 0).GroupBy(f => f.Size).Where(g => g.Count() > 1).ToList())
+            // 2. Photos animées, avant les doublons : deux copies d'une même photo animée,
+            //    l'une déjà raccourcie, deviennent identiques. L'index des copies retient
+            //    le nom et la taille d'origine.
+            if (context.StripMotion)
             {
-                var byHash = new Dictionary<string, List<Entry>>();
-                foreach (var file in sameSize)
+                var stripped = new HashSet<string>(CopyIndex.Load(root).Select(e => e.RelativePath), StringComparer.OrdinalIgnoreCase);
+                var seen = SeenPhotos.Load(root);
+                bool dirty = false;
+                void Seen(string path, RepairFile f) { seen[path] = (f.Size, f.Date.Ticks); dirty = true; }
+                foreach (var file in media.Where(f => MotionPhoto.CanStrip(f.Name)).ToList())
                 {
                     cancel.ThrowIfCancellationRequested();
-                    var hash = Sha256(file.Path);
-                    if (hash == null) continue;
-                    if (!byHash.TryGetValue(hash, out var list)) byHash[hash] = list = new List<Entry>();
-                    list.Add(file);
-                }
-                foreach (var group in byHash.Values.Where(l => l.Count > 1))
-                {
-                    var keep = group
-                        .OrderBy(f => Destination.HasNumber(f.Name))
-                        .ThenBy(f => f.Path.Length)
-                        .ThenBy(f => CreationTime(f.Path))
-                        .ThenBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
-                        .First();
-                    foreach (var extra in group.Where(f => f != keep))
+                    if (stripped.Contains(file.Path.Substring(root.Length)) || file.Size > MaxPhotoBytes) continue;
+                    var relative = file.Path.Substring(root.Length);
+                    if (seen.TryGetValue(relative, out var was) && was == (file.Size, file.Date.Ticks)) continue;
+                    if (!MotionPhoto.LooksAnimated(file.Path))
                     {
-                        if (Delete(root, extra, report))
-                        {
-                            report.Duplicates++;
-                            media.Remove(extra);
-                        }
+                        Seen(relative, file);
+                        continue;
                     }
-                }
-            }
-
-            // 3. Photos animées : on garde la photo seule, l'index des copies retient le nom et la taille d'origine.
-            if (stripMotion)
-            {
-                var indexed = new HashSet<string>(CopyIndex.Load(root).Select(e => e.RelativePath), StringComparer.OrdinalIgnoreCase);
-                foreach (var file in media.Where(f => MotionPhoto.IsJpegName(f.Name)).ToList())
-                {
-                    cancel.ThrowIfCancellationRequested();
-                    if (indexed.Contains(file.Path.Substring(root.Length)) || file.Size > MaxPhotoBytes) continue;
-                    if (!MotionPhoto.LooksAnimated(file.Path)) continue;
                     try
                     {
                         if (StripFile(root, file, report)) report.MotionStripped++;
+                        else Seen(relative, file); // lue en entier : pas de vidéo
                     }
                     catch (IOException ex) { Log.Error("rangement : photo animée " + file.Path, ex); }
                     catch (UnauthorizedAccessException ex) { Log.Error("rangement : photo animée " + file.Path, ex); }
                 }
+                if (dirty) SeenPhotos.Save(root, seen, media.Select(f => f.Path.Substring(root.Length)));
             }
 
-            // 4. Clips de photos animées : même nom qu'une photo du même dossier, 4 s au plus.
-            if (stripMotion && removeLive)
-            {
-                foreach (var folder in media.GroupBy(f => f.Folder, StringComparer.OrdinalIgnoreCase).ToList())
-                {
-                    var photos = new HashSet<string>(folder.Where(f => MediaRules.Kind(f.Name) == "photo")
-                        .Select(f => Path.GetFileNameWithoutExtension(f.Name)), StringComparer.OrdinalIgnoreCase);
-                    if (photos.Count == 0) continue;
-                    foreach (var clip in folder.Where(f => Mp4Info.IsMp4Family(f.Name) && photos.Contains(Path.GetFileNameWithoutExtension(f.Name))).ToList())
-                    {
-                        cancel.ThrowIfCancellationRequested();
-                        var seconds = Mp4Info.Duration(clip.Path);
-                        if (seconds == null || seconds > LiveMaxSeconds) continue;
-                        if (Delete(root, clip, report))
-                        {
-                            report.LiveRemoved++;
-                            media.Remove(clip);
-                        }
-                    }
-                }
-            }
+            // 3. Doublons exacts : même taille, puis même SHA-256 complet.
+            RemoveDuplicates(root, media, report, cancel);
+
+            // 4. Clips de photos animées.
+            if (context.StripMotion && context.RemoveLive) RemoveClips(root, media, context.Phone, report, cancel);
 
             // 5. Vidéos incomplètes que la copie va remplacer.
-            if (namesInCopy != null && namesInCopy.Count > 0)
+            var broken = context.BrokenNames;
+            if (broken != null && broken.Count > 0)
             {
-                foreach (var video in media.Where(f => Mp4Info.IsMp4Family(f.Name) && namesInCopy.Contains(f.Name)).ToList())
+                foreach (var video in media.Where(f => Mp4Info.IsMp4Family(f.Name) && broken.Contains(f.Name)).ToList())
                 {
                     cancel.ThrowIfCancellationRequested();
                     if (Mp4Info.IsComplete(video.Path) != false) continue;
@@ -168,12 +160,122 @@ namespace YayoPont.Core
                 }
             }
 
-            // 6. Dossiers devenus vides, y compris par une copie annulée (jamais la racine gérée elle-même).
-            RemoveEmptyFolders(root, ownRoot ? null : report.Touched);
+            // 6. Copies WhatsApp « Sent » dont l'original est sur la clé.
+            if (context.Phone != null)
+            {
+                foreach (var sent in SentCopies.Redundant(media, context.Phone, cancel))
+                {
+                    if (Delete(root, sent, report))
+                    {
+                        report.SentRemoved++;
+                        media.Remove(sent);
+                    }
+                }
+            }
+
+            // 7. Dossiers devenus vides, y compris par une copie annulée (jamais la racine gérée elle-même).
+            RemoveEmptyFolders(root, context.OwnRoot ? null : report.Touched);
+            if (report.Changed)
+            {
+                Log.Info($"rangement de {root} : {report.MotionStripped} photos animées raccourcies, {report.Duplicates} doublons, "
+                    + $"{report.LiveRemoved} clips, {report.BrokenRemoved} vidéos incomplètes, {report.SentRemoved} copies « Sent », "
+                    + $"{report.PartsRemoved} restes, {report.BytesFreed} octets libérés");
+            }
             return report;
         }
 
-        private static bool StripFile(string root, Entry file, RepairReport report)
+        private static void RemoveDuplicates(string root, List<RepairFile> media, RepairReport report, CancellationToken cancel)
+        {
+            List<CopyIndex.Entry> index = null;
+            foreach (var sameSize in media.Where(f => f.Size > 0).GroupBy(f => f.Size).Where(g => g.Count() > 1).ToList())
+            {
+                var byHash = new Dictionary<string, List<RepairFile>>();
+                foreach (var file in sameSize)
+                {
+                    cancel.ThrowIfCancellationRequested();
+                    var hash = Sha256(file.Path);
+                    if (hash == null) continue;
+                    if (!byHash.TryGetValue(hash, out var list)) byHash[hash] = list = new List<RepairFile>();
+                    list.Add(file);
+                }
+                foreach (var group in byHash.Values.Where(l => l.Count > 1))
+                {
+                    var keep = group
+                        .OrderBy(f => Destination.HasNumber(f.Name))
+                        .ThenBy(f => f.Path.Length)
+                        .ThenBy(f => CreationTime(f.Path))
+                        .ThenBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+                        .First();
+                    index = index ?? CopyIndex.Load(root);
+                    var keptEntries = new HashSet<string>(index.Where(e => Same(root, e, keep)).Select(e => e.PhoneSize + "\t" + e.PhoneName), StringComparer.OrdinalIgnoreCase);
+                    foreach (var extra in group.Where(f => f != keep))
+                    {
+                        // Ce que l'index des copies savait du fichier retiré passe au fichier gardé.
+                        var moved = index.Where(e => Same(root, e, extra)).ToList();
+                        if (!Delete(root, extra, report)) continue;
+                        report.Duplicates++;
+                        media.Remove(extra);
+                        foreach (var entry in moved)
+                        {
+                            if (keptEntries.Add(entry.PhoneSize + "\t" + entry.PhoneName))
+                                CopyIndex.Append(root, entry.PhoneName, entry.PhoneSize, keep.Path, keep.Size);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static bool Same(string root, CopyIndex.Entry entry, RepairFile file) =>
+            string.Equals(entry.RelativePath, file.Path.Substring(root.Length), StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// Clips de photos animées (4 s au plus, 12 Mo au plus) : même nom qu'une photo
+        /// du même dossier, ou qu'un clip repéré sur le téléphone, ou qu'une photo de la
+        /// clé datée à moins de 2 min (clip rangé dans le mois voisin), ou clip iPhone
+        /// (métadonnées QuickTime) dont la photo est sur la clé ou sur le téléphone.
+        /// </summary>
+        private static void RemoveClips(string root, List<RepairFile> media, IList<PhoneFile> phone, RepairReport report, CancellationToken cancel)
+        {
+            var photos = media.Where(f => MediaRules.Kind(f.Name) == "photo").ToList();
+            if (photos.Count == 0 && phone == null) return;
+            var byStem = photos.ToLookup(f => Stem(f.Name), StringComparer.OrdinalIgnoreCase);
+            var phoneLive = new HashSet<string>(phone?.Where(f => f.Live).Select(f => f.Name) ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            var phonePhotos = new HashSet<string>(phone?.Where(f => f.Kind == "photo").Select(f => Stem(f.Name)) ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var clip in media.Where(f => Mp4Info.IsMp4Family(f.Name) && f.Size <= LiveMaxBytes).ToList())
+            {
+                cancel.ThrowIfCancellationRequested();
+                var stem = Stem(clip.Name);
+                var keyPhotos = byStem[stem].ToList();
+                bool sameFolder = keyPhotos.Any(p => string.Equals(p.Folder, clip.Folder, StringComparison.OrdinalIgnoreCase));
+                bool onPhone = phoneLive.Contains(Destination.WithoutNumber(clip.Name));
+                bool near = keyPhotos.Any(p => (p.Date - clip.Date).Duration() < LiveMaxGap);
+                bool somewhere = keyPhotos.Count > 0 || phonePhotos.Contains(stem);
+                if (!sameFolder && !onPhone && !near && !somewhere) continue; // rien à lire
+                var facts = Mp4Info.Facts(Mp4Info.ReadMoov(clip.Path));
+                if (facts?.Duration == null || facts.Duration > LiveMaxSeconds) continue;
+                if (!sameFolder && !onPhone && !near && !(facts.AppleLive && somewhere)) continue;
+                if (Delete(root, clip, report))
+                {
+                    report.LiveRemoved++;
+                    media.Remove(clip);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Nom commun d'une photo et de son clip : sans extension ni « (n) », et
+        /// « IMG_E1234 » (retouchée sur iPhone) comme « IMG_1234 ».
+        /// </summary>
+        internal static string Stem(string name)
+        {
+            var stem = Path.GetFileNameWithoutExtension(Destination.WithoutNumber(name ?? ""));
+            if (stem.Length > 5 && stem.StartsWith("IMG_E", StringComparison.OrdinalIgnoreCase) && char.IsDigit(stem[5]))
+                stem = "IMG_" + stem.Substring(5);
+            return stem;
+        }
+
+        private static bool StripFile(string root, RepairFile file, RepairReport report)
         {
             var bytes = File.ReadAllBytes(file.Path);
             int length = MotionPhoto.Strip(bytes, bytes.Length);
@@ -187,6 +289,7 @@ namespace YayoPont.Core
                 output.Write(bytes, 0, length);
                 output.Flush(true);
             }
+            File.SetAttributes(file.Path, FileAttributes.Normal);
             File.Delete(file.Path);
             File.Move(temp, file.Path);
             File.SetCreationTime(file.Path, created);
@@ -197,25 +300,26 @@ namespace YayoPont.Core
             return true;
         }
 
-        private static List<Entry> List(string root)
+        private static List<RepairFile> List(string root)
         {
-            var files = new List<Entry>();
+            var files = new List<RepairFile>();
             var pending = new Stack<string>();
             pending.Push(root);
             while (pending.Count > 0)
             {
                 var dir = pending.Pop();
-                string[] names, dirs;
+                FileInfo[] infos;
+                string[] dirs;
                 try
                 {
-                    names = Directory.GetFiles(dir);
+                    infos = new DirectoryInfo(dir).GetFiles();
                     dirs = Directory.GetDirectories(dir);
                 }
                 catch (IOException) { continue; }
                 catch (UnauthorizedAccessException) { continue; }
-                foreach (var path in names)
+                foreach (var info in infos)
                 {
-                    try { files.Add(new Entry { Path = path, Size = new FileInfo(path).Length }); }
+                    try { files.Add(new RepairFile { Path = info.FullName, Size = info.Length, Date = info.LastWriteTime }); }
                     catch (IOException) { }
                 }
                 foreach (var sub in dirs)
@@ -267,7 +371,7 @@ namespace YayoPont.Core
             return result;
         }
 
-        private static bool Delete(string root, Entry file, RepairReport report)
+        private static bool Delete(string root, RepairFile file, RepairReport report)
         {
             var full = Path.GetFullPath(file.Path);
             if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return false; // jamais hors du dossier géré

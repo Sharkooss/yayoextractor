@@ -201,3 +201,41 @@ SmartScreen. Le 1.0.1 de Yayo devra être mis à jour une dernière fois à la m
 1. Pont 1.1.0 (`<Version>` bumpée) poussé en premier : la release `pont-v1.1.0` doit exister
    avant que le site ne l'exige.
 2. Site + serveur ensuite (déploiement automatique sur `main`).
+
+## Révision 1.1.1 — « 100 % automatique », toutes marques (24/10/2026, demande de Louis)
+
+Louis : « il n'a plus qu'à prendre le nouveau pont, brancher son téléphone et la clé, et ça
+réimporte tout correctement », photos animées de **toutes** les marques (iPhone compris).
+
+1. **Ranger la clé dès l'analyse.** Chez Yayo tout est déjà sur la clé (copié par le 1.0.1) :
+   le bouton de copie serait grisé et le rangement, lancé seulement à la copie, ne tournerait
+   jamais. Nouvel ordre de l'analyse : téléphone (`phone`) → rangement (`repair`, avec la liste du
+   téléphone) → index de la clé (`drive`) → comparaison (`compare`) → détails (`details`).
+   L'état de l'analyse porte `repair{…}` (même forme que pour la copie). Option `options.repair`
+   de `/scan` (défaut vrai). Le rangement reste aussi au début de la copie (quasi gratuit).
+2. **Ordre du rangement** : photos animées raccourcies **avant** les doublons exacts (deux
+   copies d'une même photo animée, l'une déjà raccourcie, deviennent identiques).
+3. **Photos animées de toutes les marques**
+   - JPEG : Samsung (remorque SEF, tous les enregistrements `MotionPhoto*`), Google (`MVIMG`,
+     `.MP.jpg`, XMP `MicroVideo`/`MotionPhoto`/`Container`), Xiaomi, Oppo/OnePlus/Realme, Vivo,
+     Honor/Huawei (MP4 collé après l'image, avec ou sans en-tête maison). Détection rapide sur la
+     clé : un JPEG qui ne finit pas par `FFD9` (fin d'image) et n'est pas une simple remorque
+     Samsung sans photo animée est lu en entier et raccourci s'il contient une vidéo.
+   - Coupe : au début de la vidéo s'il reste une image secondaire (carte de gain HDR, MPF)
+     entre la fin de l'image principale et la vidéo, sinon **à la fin de l'image principale**.
+   - **HEIC/HEIF** : vidéo dans une boîte `mpvd` (Google) ou remorque SEF Samsung après les
+     boîtes HEIF → coupe après la dernière boîte HEIF, seulement si toutes les données
+     référencées par `iloc` restent avant la coupe ; XMP neutralisé.
+   - **Clips à part** (iPhone `IMG_1234.HEIC` + `IMG_1234.MOV`, `IMG_E…` retouchées) : même nom
+     qu'une photo du même dossier (téléphone) ; sur la clé, même nom qu'une photo du même dossier
+     **ou** n'importe où dans la racine gérée avec moins de 2 min d'écart de date, durée ≤ 4 s.
+     Un clip iPhone se reconnaît aussi à ses métadonnées QuickTime
+     (`com.apple.quicktime.content.identifier` / clés `live-photo`) ; il est retiré de la clé si
+     sa photo est sur la clé ou sur le téléphone.
+4. **Copies WhatsApp « Sent » déjà sur la clé** : retirées **seulement** si leur original est
+   sur la clé. Fichier de la clé de même nom et taille qu'un élément `hidden` d'un dossier `Sent`
+   du téléphone (et d'aucun élément visible). Photo : empreinte visuelle (dHash + confirmation
+   fine, orientation EXIF appliquée, vignette EXIF quand son cadrage correspond) d'une photo de la
+   clé datée avant l'envoi. Vidéo : même durée à 0,15 s près, même format d'image, original daté
+   avant l'envoi (30 jours max) et plus lourd. Sans original trouvé : on garde.
+5. Pont **1.1.1**, le site exige `MIN_BRIDGE = "1.1.1"` (le 1.1.0 se met à jour tout seul).

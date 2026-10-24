@@ -141,7 +141,13 @@ namespace YayoPont
             var target = TargetFromBody(body, out var error);
             if (target == null) return error;
             var phoneId = Text(body, "phoneId");
-            var options = new ScanOptions { Deep = Flag(Section(body, "options"), "deep") ?? false };
+            var scanOptions = Section(body, "options");
+            var options = new ScanOptions
+            {
+                Deep = Flag(scanOptions, "deep") ?? false,
+                Repair = Flag(scanOptions, "repair") ?? true,
+                StripMotion = Flag(scanOptions, "stripMotion") ?? true,
+            };
             lock (gate)
             {
                 if (currentScan != null && currentScan.State == "running") return JobId(currentScan.Id);
@@ -171,6 +177,7 @@ namespace YayoPont
                 ["duplicates"] = job.Duplicates,
                 ["detailsDone"] = job.DetailsDone,
                 ["detailsTotal"] = job.DetailsTotal,
+                ["repair"] = job.Repair,
                 ["error"] = job.Error,
             };
             if (job.State == "done") body["items"] = job.Items;
@@ -242,7 +249,8 @@ namespace YayoPont
                 var job = new TransferJob();
                 transfers[job.Id] = job;
                 currentTransfer = job;
-                Background(() => job.Run(phone, target, files, index, options));
+                var phoneFiles = scan.Files.Values.ToList();
+                Background(() => job.Run(phone, target, files, index, options, phoneFiles));
                 return JobId(job.Id);
             }
         }

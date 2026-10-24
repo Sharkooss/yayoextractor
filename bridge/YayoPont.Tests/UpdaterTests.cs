@@ -9,7 +9,8 @@ namespace YayoPont.Tests
     public sealed class UpdaterTests : IDisposable
     {
         private readonly string folder = Path.Combine(Path.GetTempPath(), "yayo-maj-" + Guid.NewGuid().ToString("N"));
-        private static readonly string BuiltExe = typeof(Api).Assembly.Location; // YayoPont.exe 1.1.0
+        private static readonly string BuiltExe = typeof(Api).Assembly.Location;
+        private static readonly string BuiltVersion = typeof(Api).Assembly.GetName().Version.ToString(3); // celle du csproj
 
         public void Dispose()
         {
@@ -65,11 +66,11 @@ namespace YayoPont.Tests
             string launched = null;
             using (var done = new ManualResetEventSlim())
             {
-                var updater = Make("1.0.1", Release("pont-v1.1.0"));
+                var updater = Make("1.0.1", Release("pont-v" + BuiltVersion));
                 updater.Launch = exe => { launched = exe; done.Set(); };
                 var result = updater.Check();
                 Assert.Equal("started", result["state"]);
-                Assert.Equal("1.1.0", result["version"]);
+                Assert.Equal(BuiltVersion, result["version"]);
                 Assert.True(updater.Updating);
                 Assert.True(done.Wait(5000));
             }

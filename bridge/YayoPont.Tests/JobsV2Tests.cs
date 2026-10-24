@@ -49,11 +49,11 @@ namespace YayoPont.Tests
 
         private Target Drive(string rootName = null) => Target.ForDrive(new FakeDriveProvider(driveDir).List().Single(), rootName);
 
-        private (FolderPhoneSource phone, ScanJob scan) Scan(bool deep = false, Target target = null)
+        private (FolderPhoneSource phone, ScanJob scan) Scan(bool deep = false, Target target = null, bool repair = true)
         {
             var phone = new FolderPhoneSource(phoneDir);
             var scan = new ScanJob();
-            scan.Run(phone, null, target ?? Drive(), new ScanOptions { Deep = deep }, CancellationToken.None);
+            scan.Run(phone, null, target ?? Drive(), new ScanOptions { Deep = deep, Repair = repair }, CancellationToken.None);
             Assert.Equal("done", scan.State);
             return (phone, scan);
         }
@@ -123,8 +123,7 @@ namespace YayoPont.Tests
             Assert.All(visible, f => Assert.True(again.Files[f.Id].OnDrive));
         }
 
-        [Fact]
-        public void La_copie_range_d_abord_la_cle()
+        private void OldKey()
         {
             var old = Path.Combine(driveDir, "Photos du téléphone", "2025", "07 - Juillet");
             Directory.CreateDirectory(old);
@@ -132,13 +131,43 @@ namespace YayoPont.Tests
             File.WriteAllBytes(Path.Combine(old, "20250714_100000 (2).jpg"), motion); // doublon
             File.WriteAllBytes(Path.Combine(old, "IMG_5.MOV"), MediaFactory.Mp4(2));
             File.WriteAllBytes(Path.Combine(old, "IMG_5.HEIC"), new byte[10]);
+        }
+
+        [Fact]
+        public void L_analyse_range_d_abord_la_cle()
+        {
+            OldKey();
             var (phone, scan) = Scan();
+            Assert.Equal(1, scan.Repair.Duplicates);
+            Assert.Equal(2, scan.Repair.MotionStripped); // les deux copies raccourcies, puis identiques
+            Assert.Equal(1, scan.Repair.LiveRemoved);
+            Assert.True(Item(scan, "20250714_100000.jpg").OnDrive);
+            var old = Path.Combine(driveDir, "Photos du téléphone", "2025", "07 - Juillet");
+            Assert.Equal(still, File.ReadAllBytes(Path.Combine(old, "20250714_100000.jpg")));
+            Assert.False(File.Exists(Path.Combine(old, "20250714_100000 (2).jpg")));
+
+            // La copie range encore (rien à faire) puis ne recopie rien.
+            var job = new TransferJob();
+            job.Run(phone, scan.Target, scan.Files.Values.Where(f => f.Name == "20250714_100000.jpg").ToList(), scan.Index);
+            Assert.Equal("done", job.State);
+            Assert.False(job.Repair.Changed);
+            Assert.Equal(0, job.Copied);
+            Assert.Equal(1, job.Skipped);
+        }
+
+        [Fact]
+        public void La_copie_range_d_abord_la_cle()
+        {
+            OldKey();
+            var (phone, scan) = Scan(repair: false);
+            Assert.False(scan.Repair.Changed);
             var job = new TransferJob();
             job.Run(phone, scan.Target, scan.Files.Values.Where(f => f.Name == "20250714_100000.jpg").ToList(), scan.Index);
             Assert.Equal("done", job.State);
             Assert.Equal(1, job.Repair.Duplicates);
-            Assert.Equal(1, job.Repair.MotionStripped);
+            Assert.Equal(2, job.Repair.MotionStripped);
             Assert.Equal(1, job.Repair.LiveRemoved);
+            var old = Path.Combine(driveDir, "Photos du téléphone", "2025", "07 - Juillet");
             Assert.Equal(0, job.Copied);
             Assert.Equal(1, job.Skipped); // la photo raccourcie sur place compte comme déjà copiée
             Assert.Equal(still, File.ReadAllBytes(Path.Combine(old, "20250714_100000.jpg")));

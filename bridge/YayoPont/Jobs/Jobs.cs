@@ -13,23 +13,30 @@ namespace YayoPont.Jobs
     {
         /// <summary>Analyse approfondie : lit la tête de chaque photo (date EXIF, GPS) et des vidéos (GPS).</summary>
         public bool Deep;
+
+        /// <summary>Ranger la clé pendant l'analyse (défaut vrai).</summary>
+        public bool Repair = true;
+
+        /// <summary>Le rangement raccourcit les photos animées et retire leurs clips (défaut vrai).</summary>
+        public bool StripMotion = true;
     }
 
     /// <summary>
-    /// Analyse : index de la destination, liste du téléphone, ce que la Galerie
-    /// ne montre pas (masqués, clips de photos animées, doublons du téléphone),
-    /// verdict « déjà sur la clé », et en analyse approfondie EXIF et GPS.
+    /// Analyse : liste du téléphone, rangement de la clé (tout ce que le pont 1.0
+    /// y a copié), index de la destination, ce que la Galerie ne montre pas
+    /// (masqués, clips de photos animées, doublons du téléphone), verdict « déjà
+    /// sur la clé », et en analyse approfondie EXIF et GPS.
     /// </summary>
     internal sealed class ScanJob
     {
         /// <summary>Un clip de photo animée fait quelques secondes : au-delà, c'est une vraie vidéo.</summary>
-        public const long LiveMaxBytes = 12L * 1024 * 1024;
+        public const long LiveMaxBytes = KeyRepair.LiveMaxBytes;
         private const int DetailsPhotoHead = 256 * 1024;
         private const int DetailsVideoHead = 512 * 1024;
 
         public string Id { get; } = Guid.NewGuid().ToString("N");
         public string State { get; private set; } = "running";
-        public string Phase { get; private set; } = "drive";
+        public string Phase { get; private set; } = "phone";
         public int Photos { get; private set; }
         public int Videos { get; private set; }
         public int OnDriveCount { get; private set; }
@@ -39,6 +46,9 @@ namespace YayoPont.Jobs
         public int DetailsDone { get; private set; }
         public int DetailsTotal { get; private set; }
         public string Error { get; private set; }
+
+        /// <summary>Bilan du rangement fait pendant l'analyse (même forme que pour la copie).</summary>
+        public RepairReport Repair { get; private set; } = new RepairReport();
 
         internal Target Target;
         internal string PhoneId;
@@ -53,9 +63,9 @@ namespace YayoPont.Jobs
         {
             Target = target;
             PhoneId = phoneId;
+            options = options ?? new ScanOptions();
             try
             {
-                Index = DuplicateIndex.ForTarget(target);
                 Phase = "phone";
                 var files = phone.Enumerate(phoneId, file =>
                 {
@@ -63,10 +73,21 @@ namespace YayoPont.Jobs
                     else Photos++;
                     if (file.Hidden) Hidden++;
                 }, cancel);
-                Phase = "compare";
                 foreach (var file in files) Files[file.Id] = file;
                 MarkLive(files);
                 Live = files.Count(f => f.Live);
+
+                // Rangement dès l'analyse : chez Yayo tout est déjà sur la clé, la copie ne tournerait jamais.
+                if (options.Repair)
+                {
+                    Phase = "repair";
+                    Repair = RepairTarget(target, files, options.StripMotion, cancel);
+                }
+
+                // L'index des doublons se fait APRÈS le rangement : il voit la clé rangée.
+                Phase = "drive";
+                Index = DuplicateIndex.ForTarget(target);
+                Phase = "compare";
                 MarkDuplicates(phone, files, cancel);
                 Duplicates = files.Count(f => f.DuplicateOf != null);
                 foreach (var file in files)
@@ -75,7 +96,7 @@ namespace YayoPont.Jobs
                     file.OnDrive = Index.IsOnDrive(file.Name, file.Size, () => PhoneHead(phone, file.Id), DuplicateIndex.ReadHead);
                     if (file.OnDrive) OnDriveCount++;
                 }
-                if (options != null && options.Deep)
+                if (options.Deep)
                 {
                     Phase = "details";
                     ReadDetails(phone, files, cancel);
@@ -100,6 +121,32 @@ namespace YayoPont.Jobs
         }
 
         /// <summary>
+        /// Range le dossier géré avec la liste du téléphone : clips, vidéos incomplètes
+        /// dont le téléphone a un fichier de même nom, copies « Sent ». Un échec du
+        /// rangement n'empêche pas l'analyse.
+        /// </summary>
+        private static RepairReport RepairTarget(Target target, IList<PhoneFile> files, bool stripMotion, CancellationToken cancel)
+        {
+            try
+            {
+                return KeyRepair.Run(target.ManagedRoot, new RepairContext
+                {
+                    StripMotion = stripMotion,
+                    RemoveLive = true,
+                    OwnRoot = target.RootName.Length > 0,
+                    BrokenNames = new HashSet<string>(files.Select(f => f.Name), StringComparer.OrdinalIgnoreCase),
+                    Phone = files,
+                }, cancel);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                Log.Error("rangement pendant l'analyse", ex);
+                return new RepairReport();
+            }
+        }
+
+        /// <summary>
         /// Clip compagnon d'une photo animée (IMG_1234.HEIC + IMG_1234.MOV) : même
         /// dossier, même nom qu'une photo, 12 Mo au plus. La durée n'est pas lisible
         /// sans lire le fichier : elle n'est vérifiée que sur la destination.
@@ -111,7 +158,7 @@ namespace YayoPont.Jobs
                 video.Live = video.Size <= LiveMaxBytes && photos.Contains(StemKey(video));
         }
 
-        private static string StemKey(PhoneFile f) => f.Folder + "/" + Path.GetFileNameWithoutExtension(f.Name);
+        private static string StemKey(PhoneFile f) => f.Folder + "/" + KeyRepair.Stem(f.Name); // IMG_E1234 retouchée comme IMG_1234
 
         /// <summary>
         /// Doublons internes au téléphone : même taille, puis mêmes 64 premiers Ko
@@ -306,7 +353,8 @@ namespace YayoPont.Jobs
             Run(phone, target, files, index, new TransferOptions());
 
         /// <param name="index">index des doublons de l'analyse, ou null pour le refaire.</param>
-        public void Run(IPhoneSource phone, Target target, IList<PhoneFile> files, DuplicateIndex index, TransferOptions options)
+        /// <param name="phoneFiles">toute la liste du téléphone (analyse), pour le rangement ; null sinon.</param>
+        public void Run(IPhoneSource phone, Target target, IList<PhoneFile> files, DuplicateIndex index, TransferOptions options, IList<PhoneFile> phoneFiles = null)
         {
             options = options ?? new TransferOptions();
             Total = files.Count;
@@ -320,7 +368,14 @@ namespace YayoPont.Jobs
                     var names = new HashSet<string>(files.Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
                     // Clips choisis exprès (mode avancé) : ne pas les retirer pour les recopier aussitôt.
                     bool removeLive = !files.Any(f => f.Live);
-                    Repair = KeyRepair.Run(target.ManagedRoot, options.StripMotion, removeLive, names, cancel.Token, target.RootName.Length > 0);
+                    Repair = KeyRepair.Run(target.ManagedRoot, new RepairContext
+                    {
+                        StripMotion = options.StripMotion,
+                        RemoveLive = removeLive,
+                        OwnRoot = target.RootName.Length > 0,
+                        BrokenNames = names,
+                        Phone = phoneFiles,
+                    }, cancel.Token);
                     if (Repair.Changed) index = null;
                 }
                 if (index == null) index = DuplicateIndex.ForTarget(target);
@@ -390,7 +445,7 @@ namespace YayoPont.Jobs
                     // Photo : lue entièrement en mémoire pour en retirer la vidéo d'une photo animée.
                     byte[] whole = null;
                     int length = 0;
-                    if (options.StripMotion && MotionPhoto.IsJpegName(file.Name) && file.Size <= MaxInMemory)
+                    if (options.StripMotion && MotionPhoto.CanStrip(file.Name) && file.Size <= MaxInMemory)
                     {
                         var memory = new MemoryStream((int)Math.Max(file.Size, head.Length));
                         memory.Write(head, 0, head.Length);

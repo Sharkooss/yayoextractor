@@ -18,6 +18,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Vidéos de test fabriquées par ffmpeg (mires lavfi « testsrc »), pour le décodage Media Foundation. -->
+    <None Include="Fixtures\*.mp4" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\YayoPont\YayoPont.csproj" />
   </ItemGroup>
 

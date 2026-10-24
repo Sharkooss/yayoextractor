@@ -42,24 +42,19 @@ namespace YayoPont.Core
             catch (IOException) { return entries; }
             catch (UnauthorizedAccessException) { return entries; }
 
+            // Toutes les lignes valides comptent : un doublon retiré lègue ses entrées au fichier gardé.
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            for (int i = lines.Length - 1; i >= 0; i--) // la dernière ligne d'un chemin fait foi
+            var sizes = new Dictionary<string, long?>(StringComparer.OrdinalIgnoreCase);
+            for (int i = lines.Length - 1; i >= 0; i--)
             {
                 var parts = lines[i].Split('\t');
                 if (parts.Length < 4
                     || !long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out long phoneSize)
                     || !long.TryParse(parts[3], NumberStyles.None, CultureInfo.InvariantCulture, out long written)) continue;
                 var relative = parts[2];
-                if (!seen.Add(relative)) continue;
-                var full = Resolve(managedRoot, relative);
-                if (full == null) continue;
-                try
-                {
-                    var info = new FileInfo(full);
-                    if (!info.Exists || info.Length != written) continue;
-                }
-                catch (IOException) { continue; }
-                catch (UnauthorizedAccessException) { continue; }
+                if (!seen.Add(lines[i])) continue;
+                if (!sizes.TryGetValue(relative, out var size)) sizes[relative] = size = SizeOf(Resolve(managedRoot, relative));
+                if (size != written) continue;
                 entries.Add(new Entry { PhoneName = parts[0], PhoneSize = phoneSize, RelativePath = relative, WrittenSize = written });
             }
             return entries;
@@ -91,6 +86,18 @@ namespace YayoPont.Core
             catch (UnauthorizedAccessException ex) { Log.Error("index des copies", ex); }
         }
 
+        private static long? SizeOf(string full)
+        {
+            if (full == null) return null;
+            try
+            {
+                var info = new FileInfo(full);
+                return info.Exists ? info.Length : (long?)null;
+            }
+            catch (IOException) { return null; }
+            catch (UnauthorizedAccessException) { return null; }
+        }
+
         private static string Clean(string s) => (s ?? "").Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');
 
         private static string Resolve(string managedRoot, string relative)
@@ -104,6 +111,59 @@ namespace YayoPont.Core
             catch (ArgumentException) { return null; }
             catch (NotSupportedException) { return null; }
             catch (PathTooLongException) { return null; }
+        }
+    }
+
+    /// <summary>
+    /// Photos de la clé déjà examinées et sans vidéo, « .yayo-pont-vues.tsv » (caché,
+    /// système) : chemin relatif, taille, date (ticks). Sur une clé USB 2 de 14 000
+    /// photos, chaque analyse ne rouvre ainsi que les photos nouvelles ou modifiées.
+    /// </summary>
+    internal static class SeenPhotos
+    {
+        public const string FileName = ".yayo-pont-vues.tsv";
+
+        public static Dictionary<string, (long size, long ticks)> Load(string managedRoot)
+        {
+            var seen = new Dictionary<string, (long, long)>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                var path = Path.Combine(managedRoot, FileName);
+                if (!File.Exists(path)) return seen;
+                foreach (var line in File.ReadAllLines(path, Encoding.UTF8))
+                {
+                    var parts = line.Split('\t');
+                    if (parts.Length == 3
+                        && long.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out long size)
+                        && long.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out long ticks))
+                        seen[parts[0]] = (size, ticks);
+                }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return seen;
+        }
+
+        /// <summary>Réécrit la liste, limitée aux fichiers encore présents.</summary>
+        public static void Save(string managedRoot, Dictionary<string, (long size, long ticks)> seen, IEnumerable<string> present)
+        {
+            var keep = new HashSet<string>(present, StringComparer.OrdinalIgnoreCase);
+            var text = new StringBuilder();
+            foreach (var pair in seen)
+            {
+                if (!keep.Contains(pair.Key) || pair.Key.IndexOf('\t') >= 0) continue;
+                text.Append(pair.Key).Append('\t').Append(pair.Value.size.ToString(CultureInfo.InvariantCulture))
+                    .Append('\t').Append(pair.Value.ticks.ToString(CultureInfo.InvariantCulture)).Append("\r\n");
+            }
+            var path = Path.Combine(managedRoot, FileName);
+            try
+            {
+                if (File.Exists(path)) File.SetAttributes(path, FileAttributes.Normal); // un fichier caché ne se réécrit pas
+                File.WriteAllText(path, text.ToString(), new UTF8Encoding(false));
+                File.SetAttributes(path, FileAttributes.Hidden | FileAttributes.System);
+            }
+            catch (IOException ex) { Log.Error("liste des photos examinées", ex); }
+            catch (UnauthorizedAccessException ex) { Log.Error("liste des photos examinées", ex); }
         }
     }
 }

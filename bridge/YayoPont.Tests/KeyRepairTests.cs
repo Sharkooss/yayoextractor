@@ -42,8 +42,9 @@ namespace YayoPont.Tests
             Assert.True(attributes.HasFlag(FileAttributes.Hidden) && attributes.HasFlag(FileAttributes.System));
             CopyIndex.Append(Root, "IMG_4.jpg", 8000, photo, 10); // fichier caché : l'ajout marche encore
             var entries = CopyIndex.Load(Root);
-            Assert.Equal(new[] { "IMG_4.jpg" }, entries.Select(e => e.PhoneName).ToArray());
-            Assert.Equal(8000, entries[0].PhoneSize);
+            // Toutes les entrées valides d'un chemin comptent (un doublon retiré lègue les siennes).
+            Assert.Equal(new[] { "IMG_1.jpg", "IMG_4.jpg" }, entries.Select(e => e.PhoneName).OrderBy(n => n).ToArray());
+            Assert.Equal(8000, entries.Single(e => e.PhoneName == "IMG_4.jpg").PhoneSize);
         }
 
         [Fact]
