@@ -36,7 +36,8 @@ Aucune migration ni commande d'initialisation : le conteneur est autonome.
     réussie (titre, chaîne, durée, taille, temps de traitement). Vide = désactivé.
     À renseigner uniquement dans le `.env` du serveur, jamais dans le dépôt.
 - **Volume** : `downloads` monté sur `/data` (fichiers temporaires de conversion et photos
-  réparées, dans `/data/jobs` et `/data/photos`, nettoyés automatiquement).
+  réparées, dans `/data/jobs` et `/data/photos`, nettoyés automatiquement ; données GeoNames
+  du tri par lieu dans `/data/geonames`, gardées entre les déploiements).
 - **Healthcheck** : `GET /api/health` (intégré au Dockerfile).
 - **Sidecar `warp`** : proxy Cloudflare WARP ([caomingjun/warp](https://hub.docker.com/r/caomingjun/warp)).
   YouTube bloque les IP de datacenter (« Sign in to confirm you're not a bot ») ;
@@ -101,10 +102,67 @@ Devices (aucun réglage sur le téléphone) et écrit sur la clé.
   sans la marque « téléchargé d'internet », donc pas d'alerte au démarrage de Windows.
 - **Sécurité** : écoute sur `127.0.0.1` seulement, en-tête `Host` vérifié, origines limitées au
   site (et `localhost:8124` en dev), jeton de session pour tout le reste. Lecture seule sur le
-  téléphone ; écriture seulement sous `Photos du téléphone` sur la clé choisie.
+  téléphone ; écriture seulement dans la destination choisie (chemin local absolu, jamais
+  Windows ni Program Files), sous `Photos du téléphone` en mode normal.
 - **Rangement** : `<clé>\Photos du téléphone\AAAA\MM - Mois\`, date EXIF sinon date du téléphone.
   Déjà sur la clé = même taille et même nom, ou même taille et mêmes 64 premiers Ko (copies
-  renommées). Copie en `.part`, vérifiée, puis renommée.
+  renommées), ou inscrit dans l'index `.yayo-pont.tsv` (caché) de la destination. Copie en
+  `.part`, vérifiée (taille lue, vidéo complète), puis renommée.
+
+### Pont 1.1 : ce que la Galerie montre, une seule fois, en photo fixe
+
+Retours de Yayo après son premier transfert (24/10/2026) : des « vidéos de 1-2 s » et des doublons.
+Conception : `docs/superpowers/specs/2026-10-24-telephone-v2-design.md`.
+
+- **Photos animées** (Motion Photo Samsung/Google) : la vidéo collée après le JPEG est retirée à
+  la copie, seule la photo arrive sur la clé. Les clips à part de même nom qu'une photo
+  (`IMG_1234.HEIC` + `.MOV`) ne sont pas copiés.
+- **Doublons** : les dossiers `.nomedia` (dont les `Sent` de WhatsApp, copies recompressées de ce
+  qu'on envoie) sont masqués par la Galerie du téléphone, donc ignorés ; les fichiers identiques à
+  plusieurs endroits du téléphone ne sont copiés qu'une fois.
+- **« Ranger la clé »** avant chaque copie, dans `Photos du téléphone` seulement : doublons exacts
+  (SHA-256) supprimés, photos animées raccourcies sur place, clips de 4 s au plus retirés, vidéos
+  incomplètes recopiées, `.part` orphelins effacés. Les copies `Sent` déjà sur la clé restent
+  (rien ne prouve que l'original y est). Bilan affiché en une phrase à la fin.
+- **Mise à jour automatique** : au démarrage puis toutes les 12 h, le pont lit la dernière release
+  GitHub, télécharge le nouvel exe (sans marque internet, donc sans SmartScreen) et se réinstalle
+  avec `--maj`, sans ouvrir le site. Le site déclenche aussi `POST /update` quand il trouve un pont
+  trop ancien. Le 1.0.1 n'a pas ce mécanisme : il se met à jour une dernière fois à la main.
+
+### Mode « Ne pas toucher » (avancé, pour Louis)
+
+Interrupteur en bas à gauche de l'onglet (état dans `localStorage`, `yayo.telephone.avance`).
+Choix du téléphone, destination libre (clé, disque, n'importe quel dossier via le sélecteur
+Windows ouvert par le pont), modèles de dossiers et de noms à jetons (`{annee}/{mois} - {mois_nom}`,
+`{lieu}/{annee}`…), analyse approfondie (date EXIF + GPS), tri par lieu avec lieux fréquents,
+filtres, options de copie, aperçu du rangement (`POST /plan`), statistiques et export CSV.
+Code : `phone-expert.js` (interface), `phone-rules.js` (règles pures : lieux, modèles, CSV).
+
+### Tri par lieu : géocodage inverse
+
+Le mode « Ne pas toucher » range les photos par ville, département, région ou pays d'après le
+GPS de l'EXIF. La page envoie les coordonnées lues par le pont au serveur du site, `app/geo.py` répond **hors ligne** : aucune
+position de photo ne part vers un service tiers, et le serveur ne les garde ni ne les journalise.
+
+- **API** : `POST /api/geo/reverse` `{"points": [[lat, lon], …]}` (5 000 max, sinon `400`) →
+  `{"places": [{ville, departement, region, pays, codePays} | null, …]}` dans le même ordre ;
+  un point invalide donne `null` à sa place. Ville = lieu habité le plus proche à moins de
+  30 km ; département, région et pays viennent de ce même lieu jusqu'à 100 km ; au-delà
+  (pleine mer), `null`.
+- **Données** : GeoNames (`cities500.zip`, `admin1CodesASCII.txt`, `admin2Codes.txt`, ~16 Mo)
+  dans `/data/geonames`, téléchargées en tâche de fond au démarrage si absentes (sans retarder
+  le healthcheck), puis au premier besoin si ce premier essai a échoué (au plus un essai par
+  minute). Écriture en `.part` puis renommage, un seul téléchargement à la fois. Sortie
+  internet directe, pas par WARP. Pour rafraîchir : supprimer le dossier et redémarrer.
+- **Mémoire** : chargées à la première requête (~2 s), ~55 Mo ensuite ; 5 000 points en
+  ~150 ms. Tant que personne ne trie par lieu, rien n'est chargé.
+- **Données indisponibles** : `503` avec un message en français, le site l'affiche tel quel.
+- **Nettoyage des noms** : pays en français (table intégrée), préfixes « Département du/de
+  la/… » retirés, régions et départements français que GeoNames donne en anglais corrigés
+  (Bretagne, Corse-du-Sud…), arrondissements de Paris, Lyon et Marseille ramenés à la ville,
+  quartiers (`PPLX`) ignorés. Un village de moins de 500 habitants n'est pas dans
+  `cities500` : ses photos prennent le nom de la commune voisine la plus proche.
+- **Tests** : `pytest tests` (jeu de données synthétique, sans réseau).
 
 ### Publier une nouvelle version du pont
 

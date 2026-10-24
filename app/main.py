@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import photos
+from app import geo, photos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("yayoextractor")
@@ -28,6 +28,8 @@ log = logging.getLogger("yayoextractor")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 JOBS_DIR = DATA_DIR / "jobs"
 PHOTOS_DIR = DATA_DIR / "photos"
+# Géocodage inverse (tri par lieu de l'onglet Téléphone) : données GeoNames persistantes.
+geocoder = geo.Geocoder(DATA_DIR / "geonames")
 # Optionnel : un cookies.txt exporté du navigateur, monté dans /data,
 # si YouTube se met à bloquer l'IP du serveur.
 COOKIES_FILE = DATA_DIR / "cookies.txt"
@@ -284,6 +286,8 @@ async def lifespan(_: FastAPI):
         for child in root.iterdir():
             shutil.rmtree(child, ignore_errors=True)
     threading.Thread(target=cleanup_loop, daemon=True).start()
+    # En tâche de fond : ni le démarrage ni le healthcheck n'attendent GeoNames.
+    threading.Thread(target=geocoder.prefetch, daemon=True).start()
     yield
 
 
@@ -500,6 +504,28 @@ def view_photo(batch_id: str, index: int):
     path, filename = photo_file(batch_id, index)
     return FileResponse(path, filename=filename, media_type="image/jpeg",
                         content_disposition_type="inline")
+
+
+# ---------- Géocodage inverse ----------
+
+
+class GeoRequest(BaseModel):
+    # Non typé point par point : un point invalide donne `null` à sa place
+    # au lieu de faire rejeter toute la requête.
+    points: list
+
+
+@app.post("/api/geo/reverse")
+def geo_reverse(req: GeoRequest):
+    """Ville, département, région et pays de chaque point. Les coordonnées ne sont
+    ni conservées ni journalisées."""
+    if len(req.points) > geo.MAX_POINTS:
+        raise HTTPException(status_code=400,
+                            detail=f"{geo.MAX_POINTS} points maximum par requête.")
+    try:
+        return {"places": geocoder.reverse(req.points)}
+    except geo.GeoUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")

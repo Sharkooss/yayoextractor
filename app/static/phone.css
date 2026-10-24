@@ -974,3 +974,26 @@
 #source-chips { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 4px; margin: -2px -2px 0; }
 #source-chips::-webkit-scrollbar { display: none; }
 #source-chips .chip { flex-shrink: 0; }
+
+/* ---------- v2 : ce qui n'est pas copié, et le rangement de la clé ---------- */
+
+/* Une ligne discrète sous les filtres : copies WhatsApp, clips, doublons écartés. */
+.gallery-note { margin: -4px 0 0; font-size: 0.86rem; font-weight: 600; color: var(--ink-soft); text-wrap: pretty; }
+.gallery-note[hidden] { display: none; }
+.space-gauge[hidden] { display: none; }
+
+/* « On range ta clé… » : avant de copier, le flux s'arrête et la clé s'active. */
+.xfer.repairing .xfer-arc path { animation-play-state: paused; opacity: 0.35; }
+.xfer.repairing .xfer-title { color: var(--lab-amber); }
+.xfer.repairing .xfer-key-led { background: var(--lab-amber); box-shadow: 0 0 10px var(--lab-amber); animation-duration: 0.25s; }
+.xfer.repairing .xfer-key-body { animation: key-tidy 1.1s ease-in-out infinite; }
+.xfer.repairing .xfer-count,
+.xfer.repairing .xfer-bar { opacity: 0.35; }
+@keyframes key-tidy { 50% { box-shadow: 0 0 70px rgba(255, 181, 71, 0.45); } }
+/* Les boutons du bilan qu'on cache (clé éjectée, export du mode avancé) disparaissent vraiment. */
+.end-actions [hidden] { display: none; }
+/* Deux badges trop larges pour la vignette : ils passent l'un sous l'autre, sans couper le texte. */
+.tile-badge { flex-wrap: wrap-reverse; }
+.tile-badge span { white-space: nowrap; }
+/* Case vide qui pousse le badge « Vidéo » à droite : invisible. */
+.tile-badge span[hidden] { padding: 0; background: none; }

@@ -11,7 +11,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@400;600;700;800&family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=8">
   <link rel="stylesheet" href="lab.css?v=2">
-  <link rel="stylesheet" href="phone.css?v=13">
+  <link rel="stylesheet" href="phone.css?v=14">
+  <link rel="stylesheet" href="phone-expert.css?v=1">
   <script>
     // Appliqué avant le rendu : sinon la page clignote en blanc au chargement.
     (function () {
@@ -271,6 +272,54 @@
         </li>
       </ol>
 
+      <!-- Mode « Ne pas toucher » : la console de réglages remplace les étapes. -->
+      <div class="xp-console" id="xp-console" hidden>
+        <div class="xp-head">
+          <span class="xp-brand">YAYO<span>//</span>PONT</span>
+          <span class="xp-bridge" id="xp-bridge">—</span>
+        </div>
+
+        <section class="xp-sec" aria-labelledby="xp-l-phone">
+          <h3 class="xp-label" id="xp-l-phone">Téléphone</h3>
+          <div class="xp-picks" id="xp-phones"></div>
+        </section>
+
+        <section class="xp-sec" aria-labelledby="xp-l-dest">
+          <h3 class="xp-label" id="xp-l-dest">Destination</h3>
+          <div class="xp-picks" id="xp-drives"></div>
+          <form class="xp-row" id="xp-folder-form">
+            <input class="xp-input xp-mono" id="xp-folder" list="xp-recents" placeholder="D:\Photos\Téléphone"
+                   spellcheck="false" autocomplete="off" aria-label="Chemin du dossier de destination">
+            <button type="submit" class="xp-btn">Utiliser</button>
+          </form>
+          <datalist id="xp-recents"></datalist>
+          <div class="xp-row">
+            <button type="button" class="xp-btn" id="xp-pick">
+              <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
+              <span id="xp-pick-label">Choisir un dossier…</span>
+            </button>
+          </div>
+          <div class="xp-recents" id="xp-recent-list"></div>
+          <label class="xp-field">
+            <span>Dossier racine</span>
+            <input class="xp-input xp-mono" id="xp-root" placeholder="vide = directement dans la destination" spellcheck="false" autocomplete="off">
+          </label>
+          <p class="xp-note" id="xp-dest-note" hidden></p>
+        </section>
+
+        <section class="xp-sec" aria-labelledby="xp-l-scan">
+          <h3 class="xp-label" id="xp-l-scan">Analyse</h3>
+          <label class="xp-check"><input type="checkbox" id="xp-deep"> Approfondie : date de prise de vue et GPS (EXIF)</label>
+          <div class="xp-row">
+            <button type="button" class="xp-btn" id="xp-rescan">
+              <svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>
+              Relancer l'analyse
+            </button>
+          </div>
+          <p class="xp-note" id="xp-scan-note"></p>
+        </section>
+      </div>
+
       <div class="rail-action" id="rail-action" hidden>
         <div class="sel-summary">
           <strong id="sel-count">Aucune photo choisie</strong>
@@ -285,11 +334,20 @@
           <svg class="icon" aria-hidden="true"><use href="#i-usb"/></svg>
           <span id="copy-label">Copier sur la clé</span>
         </button>
+        <button type="button" class="btn-text xp-plan-quick" id="xp-plan-quick" hidden>Aperçu du rangement</button>
         <p class="hint error" id="copy-error" hidden></p>
       </div>
     </section>
 
     <section class="card phone-stage" id="phone-stage" aria-live="polite">
+
+      <div class="xp-tabs" id="xp-tabs" role="group" aria-label="Volets du mode avancé" hidden>
+        <button type="button" class="xp-tab" data-panel="galerie" aria-pressed="true">Galerie</button>
+        <button type="button" class="xp-tab" data-panel="xp-rangement" aria-pressed="false">Rangement</button>
+        <button type="button" class="xp-tab" data-panel="xp-lieux" aria-pressed="false">Lieux</button>
+        <button type="button" class="xp-tab" data-panel="xp-options" aria-pressed="false">Copie</button>
+        <button type="button" class="xp-tab" data-panel="xp-stats" aria-pressed="false">Statistiques</button>
+      </div>
 
       <div class="stage-panel" id="panel-pont" hidden>
         <div class="stage-center" id="pont-searching">
@@ -366,12 +424,61 @@
 
         <div class="install" id="pont-update" hidden>
           <h3 class="stage-title">Le pont doit être mis à jour</h3>
-          <p class="stage-text">Une nouvelle version du Pont Yayo est nécessaire. Télécharge-la et ouvre-la comme la première fois : elle remplace l'ancienne toute seule.</p>
+          <p class="stage-text">
+            Ton Pont Yayo est trop ancien : il recopiait certaines photos en double. Télécharge la
+            nouvelle version et ouvre-la comme la première fois : elle remplace l'ancienne toute seule.
+            C'est la dernière fois : ensuite, il se mettra à jour sans toi.
+          </p>
           <a class="btn btn-go install-btn"
              href="https://github.com/Sharkooss/yayoextractor/releases/latest/download/YayoPont.exe">
             <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>
             Télécharger la mise à jour
           </a>
+          <ol class="install-steps">
+            <li class="install-step">
+              <span class="install-num">1</span>
+              <div class="install-copy">
+                <strong>Ouvre le fichier téléchargé</strong>
+                <span>Clique sur « YayoPont.exe » en haut à droite du navigateur.</span>
+              </div>
+              <div class="mock mock-browser" aria-hidden="true">
+                <div class="mock-bar"><i></i><i></i><i></i><b class="mock-dl"><svg class="icon"><use href="#i-download"/></svg></b></div>
+                <div class="mock-bubble"><svg class="icon"><use href="#i-download"/></svg><span>YayoPont.exe</span><small>Ouvrir</small></div>
+              </div>
+            </li>
+            <li class="install-step">
+              <span class="install-num">2</span>
+              <div class="install-copy">
+                <strong>La fenêtre bleue revient</strong>
+                <span>Comme la première fois : clique sur « Informations complémentaires ».</span>
+              </div>
+              <div class="mock mock-smartscreen" aria-hidden="true">
+                <b>Windows a protégé votre ordinateur</b>
+                <i></i><i class="short"></i>
+                <u class="mock-target">Informations complémentaires</u>
+                <span class="mock-btn">Ne pas exécuter</span>
+              </div>
+            </li>
+            <li class="install-step">
+              <span class="install-num">3</span>
+              <div class="install-copy">
+                <strong>Puis sur « Exécuter quand même »</strong>
+                <span>La mise à jour prend une seconde, puis cette page continue toute seule.</span>
+              </div>
+              <div class="mock mock-smartscreen" aria-hidden="true">
+                <b>Windows a protégé votre ordinateur</b>
+                <i></i><i class="short"></i>
+                <span class="mock-row"><span class="mock-btn mock-target">Exécuter quand même</span><span class="mock-btn">Ne pas exécuter</span></span>
+              </div>
+            </li>
+          </ol>
+          <p class="wait-line"><span class="pulse-dot" aria-hidden="true"></span>En attente de la nouvelle version… cette page la verra toute seule.</p>
+        </div>
+
+        <div class="stage-center" id="pont-updating" hidden>
+          <span class="loader-ring" aria-hidden="true"></span>
+          <h3 class="stage-title">On met à jour le pont…</h3>
+          <p class="stage-text" id="updating-text">Ça prend quelques secondes. Ne débranche rien : la page continue toute seule.</p>
         </div>
 
         <div class="stage-center" id="pont-notwindows" hidden>
@@ -457,7 +564,21 @@
             <button type="button" class="btn-text" id="select-none">Tout désélectionner</button>
             <label class="switch"><input type="checkbox" id="hide-ondrive"><span class="switch-ui" aria-hidden="true"></span>Cacher ce qui est déjà sur la clé</label>
           </div>
+          <div class="xp-filters" id="xp-filters" hidden>
+            <span class="xp-group" role="group" aria-label="Période">
+              <span class="xp-inline-label">Période</span>
+              <label class="xp-inline">du <input type="date" class="xp-input" id="xp-from"></label>
+              <label class="xp-inline">au <input type="date" class="xp-input" id="xp-to"></label>
+            </span>
+            <span class="xp-group" role="group" aria-label="Inclure">
+              <span class="xp-inline-label">Inclure</span>
+              <label class="xp-check"><input type="checkbox" id="xp-inc-hidden"> masqués <small id="xp-n-hidden"></small></label>
+              <label class="xp-check"><input type="checkbox" id="xp-inc-live"> clips animés <small id="xp-n-live"></small></label>
+              <label class="xp-check"><input type="checkbox" id="xp-inc-dupes"> doublons <small id="xp-n-dupes"></small></label>
+            </span>
+          </div>
         </div>
+        <p class="gallery-note" id="gallery-skipped" hidden></p>
         <div class="gallery-scroll" id="gallery-scroll">
           <div class="gallery" id="gallery"></div>
           <div class="gallery-more" id="gallery-more" hidden>
@@ -470,7 +591,117 @@
           <p class="gallery-empty" id="gallery-empty" hidden></p>
         </div>
       </div>
+
+      <!-- Mode avancé : volets (le reste du temps, rien de tout ça n'est visible). -->
+      <div class="stage-panel" id="panel-xp-wait" hidden>
+        <div class="stage-center xp-wait">
+          <svg class="icon xp-wait-icon" aria-hidden="true"><use href="#i-phone"/></svg>
+          <h3 class="stage-title" id="xp-wait-title">En attente</h3>
+          <p class="stage-text" id="xp-wait-text"></p>
+        </div>
+      </div>
+
+      <div class="stage-panel xp-panel" id="panel-xp-rangement" hidden>
+        <section class="xp-card">
+          <h3 class="xp-label">Préréglages</h3>
+          <div class="xp-presets" id="xp-presets"></div>
+          <label class="xp-field">
+            <span>Modèle de dossiers <small>« / » sépare les dossiers, vide = tout dans la racine</small></span>
+            <input class="xp-input xp-mono" id="xp-layout" spellcheck="false" autocomplete="off">
+          </label>
+          <label class="xp-field">
+            <span>Modèle de nom de fichier <small>l'extension est toujours gardée</small></span>
+            <input class="xp-input xp-mono" id="xp-filename" spellcheck="false" autocomplete="off">
+          </label>
+          <div class="xp-tokens" id="xp-tokens" role="group" aria-label="Insérer un jeton dans le dernier modèle touché"></div>
+          <p class="xp-warn" id="xp-place-warn" hidden></p>
+        </section>
+        <section class="xp-card">
+          <h3 class="xp-label">Exemples <small>sélection actuelle, calcul local</small></h3>
+          <ul class="xp-examples xp-mono" id="xp-examples"></ul>
+        </section>
+        <section class="xp-card">
+          <div class="xp-card-head">
+            <h3 class="xp-label">Aperçu du rangement <small>calculé par le pont, rien n'est écrit</small></h3>
+            <button type="button" class="xp-btn xp-btn-main" id="xp-plan-btn">Calculer l'aperçu</button>
+          </div>
+          <p class="xp-status" id="xp-plan-status" role="status"></p>
+          <div class="xp-tree xp-mono" id="xp-plan-tree"></div>
+        </section>
+      </div>
+
+      <div class="stage-panel xp-panel" id="panel-xp-lieux" hidden>
+        <section class="xp-card">
+          <h3 class="xp-label">Tri par lieu</h3>
+          <p class="xp-note" id="xp-geo-summary"></p>
+          <div class="xp-grid">
+            <label class="xp-field">
+              <span>Niveau de {lieu}</span>
+              <select class="xp-input" id="xp-level">
+                <option value="ville">Ville</option>
+                <option value="departement">Département</option>
+                <option value="region">Région</option>
+                <option value="pays">Pays</option>
+              </select>
+            </label>
+            <label class="xp-field">
+              <span>Lieu fréquent : au moins</span>
+              <span class="xp-unit"><input type="number" class="xp-input xp-num" id="xp-min" min="1" max="99999" step="1"> fichiers</span>
+            </label>
+            <label class="xp-field">
+              <span>Sans GPS : lieu de la photo la plus proche à moins de</span>
+              <span class="xp-unit"><input type="number" class="xp-input xp-num" id="xp-hours" min="0" max="720" step="0.5"> h</span>
+            </label>
+          </div>
+          <p class="xp-note">Un lieu qui regroupe moins de fichiers que le seuil remonte au niveau supérieur (ville → département → région → pays).</p>
+          <div class="xp-row">
+            <button type="button" class="xp-btn xp-btn-main" id="xp-geo-btn">Trouver les lieux</button>
+            <button type="button" class="xp-btn" id="xp-deep-btn" hidden>Lancer l'analyse approfondie</button>
+          </div>
+          <p class="xp-status" id="xp-geo-status" role="status"></p>
+        </section>
+        <section class="xp-card" id="xp-places-card" hidden>
+          <h3 class="xp-label">Lieux <small id="xp-places-sub"></small></h3>
+          <div class="xp-bars" id="xp-places"></div>
+        </section>
+      </div>
+
+      <div class="stage-panel xp-panel" id="panel-xp-options" hidden>
+        <section class="xp-card">
+          <h3 class="xp-label">Options de copie</h3>
+          <label class="xp-check"><input type="checkbox" data-opt="stripMotion"> Retirer la vidéo des photos animées <small>la photo seule est copiée</small></label>
+          <label class="xp-check"><input type="checkbox" data-opt="repair"> Ranger la destination avant de copier <small>doublons exacts, photos animées, clips, vidéos incomplètes, *.part</small></label>
+          <label class="xp-check"><input type="checkbox" data-opt="dedupe"> Ignorer ce qui est déjà sur la destination <small>décoché : « Déjà là » redevient sélectionnable</small></label>
+          <label class="xp-check"><input type="checkbox" data-opt="verify"> Vérifier après copie <small>relecture et SHA-256, plus lent</small></label>
+          <label class="xp-check"><input type="checkbox" data-opt="keepDates"> Garder les dates d'origine sur les fichiers</label>
+          <label class="xp-field xp-field-narrow">
+            <span>Même nom, contenu différent</span>
+            <select class="xp-input" id="xp-conflict">
+              <option value="rename">Renommer en « nom (2) »</option>
+              <option value="skip">Ignorer</option>
+              <option value="replace">Remplacer</option>
+            </select>
+          </label>
+          <div class="xp-row"><button type="button" class="xp-btn" id="xp-opt-reset">Remettre les valeurs par défaut</button></div>
+        </section>
+      </div>
+
+      <div class="stage-panel xp-panel" id="panel-xp-stats" hidden>
+        <div class="xp-kpis" id="xp-kpis"></div>
+        <div class="xp-stat-grid">
+          <section class="xp-card"><h3 class="xp-label">Par année</h3><div class="xp-bars" id="xp-stat-year"></div></section>
+          <section class="xp-card"><h3 class="xp-label">Par source</h3><div class="xp-bars" id="xp-stat-source"></div></section>
+          <section class="xp-card"><h3 class="xp-label">Par type</h3><div class="xp-bars" id="xp-stat-kind"></div></section>
+          <section class="xp-card"><h3 class="xp-label">Par lieu</h3><div class="xp-bars" id="xp-stat-place"></div></section>
+        </div>
+      </div>
     </section>
+
+    <label class="xp-toggle" id="xp-toggle">
+      <input type="checkbox" id="xp-switch">
+      <span class="switch-ui" aria-hidden="true"></span>
+      Ne pas toucher
+    </label>
   </main>
 
   <footer>
@@ -481,7 +712,7 @@
     <button type="button" class="viewer-close" id="viewer-close" aria-label="Fermer l'aperçu">
       <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
     </button>
-    <img id="viewer-img" alt="">
+    <img id="viewer-img" alt="" crossorigin="anonymous">
     <p class="viewer-note" id="viewer-note" hidden></p>
   </div>
 
@@ -500,7 +731,7 @@
     </div>
 
     <div class="xfer-hud" id="xfer-hud">
-      <div class="xfer-title">Copie en cours</div>
+      <div class="xfer-title" id="xfer-title">Copie en cours</div>
       <div class="xfer-count"><strong id="xfer-done">0</strong><span>sur <span id="xfer-total">0</span></span></div>
       <div class="xfer-bar"><div class="xfer-fill" id="xfer-fill"></div></div>
       <div class="xfer-meta"><span id="xfer-current">Préparation…</span><span id="xfer-eta"></span></div>
@@ -519,7 +750,11 @@
         </button>
         <button type="button" class="lab-btn lab-btn-ghost" id="end-open">
           <svg class="icon" aria-hidden="true"><use href="#i-folder"/></svg>
-          Ouvrir la clé
+          <span id="end-open-label">Ouvrir la clé</span>
+        </button>
+        <button type="button" class="lab-btn lab-btn-ghost" id="end-csv" hidden>
+          <svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>
+          Exporter le bilan (CSV)
         </button>
         <button type="button" class="lab-btn lab-btn-ghost" id="end-close">Revenir aux photos</button>
       </div>
@@ -663,6 +898,8 @@
 
   <script src="app.js?v=6"></script>
   <script src="photos.js?v=3"></script>
-  <script src="phone.js?v=12"></script>
+  <script src="phone-rules.js?v=1"></script>
+  <script src="phone-expert.js?v=1"></script>
+  <script src="phone.js?v=13"></script>
 </body>
 </html>
