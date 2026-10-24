@@ -297,17 +297,19 @@
 
   /** Bilan du rangement de la destination ; "" si rien n'a été fait.
       `detailed` (mode avancé) ajoute les copies interrompues et la place libérée. */
-  function repairSentence(repair, where = "ta clé", detailed = false) {
+  function repairSentence(repair, where = "ta clé", detailed = false, moment = "copy") {
     if (!repair) return "";
+    const scan = moment === "scan";
     const parts = [];
     if (repair.duplicates) parts.push(`${many(repair.duplicates, "doublon enlevé", "doublons enlevés")}`);
     if (repair.motionStripped) parts.push(`${many(repair.motionStripped, "photo animée remise", "photos animées remises")} en photo`);
     if (repair.liveRemoved) parts.push(`${many(repair.liveRemoved, "clip de photo animée enlevé", "clips de photos animées enlevés")}`);
-    if (repair.brokenRemoved) parts.push(`${many(repair.brokenRemoved, "vidéo incomplète enlevée", "vidéos incomplètes enlevées")} (recopiée${repair.brokenRemoved > 1 ? "s" : ""} juste après)`);
+    if (repair.brokenRemoved) parts.push(`${many(repair.brokenRemoved, "vidéo incomplète enlevée", "vidéos incomplètes enlevées")} (${scan ? "à recopier" : `recopiée${repair.brokenRemoved > 1 ? "s" : ""} juste après`})`);
+    if (repair.sentRemoved) parts.push(`${many(repair.sentRemoved, "copie WhatsApp en double enlevée", "copies WhatsApp en double enlevées")}`);
     if (detailed && repair.partsRemoved) parts.push(`${many(repair.partsRemoved, "copie interrompue effacée", "copies interrompues effacées")}`);
     if (!parts.length) return "";
     const freed = detailed && repair.bytesFreed > 0 ? ` (${formatBytes(repair.bytesFreed)} libérés)` : "";
-    return `On a aussi rangé ${where} : ${joinFr(parts)}${freed}.`;
+    return `${scan ? "On a rangé" : "On a aussi rangé"} ${where} : ${joinFr(parts)}${freed}.`;
   }
 
   /* ---------- CSV (Excel français : « ; » et BOM UTF-8) ---------- */

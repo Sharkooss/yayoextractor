@@ -980,6 +980,14 @@
 /* Une ligne discrète sous les filtres : copies WhatsApp, clips, doublons écartés. */
 .gallery-note { margin: -4px 0 0; font-size: 0.86rem; font-weight: 600; color: var(--ink-soft); text-wrap: pretty; }
 .gallery-note[hidden] { display: none; }
+.gallery-repaired {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0;
+  padding: 10px 14px; border-radius: 12px;
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  color: var(--ink); font-weight: 700; font-size: 0.95rem; text-wrap: pretty;
+}
+.gallery-repaired .icon { flex: none; width: 20px; height: 20px; margin-top: 1px; color: var(--success); stroke-width: 3; }
+.gallery-repaired[hidden] { display: none; }
 .space-gauge[hidden] { display: none; }
 
 /* « On range ta clé… » : avant de copier, le flux s'arrête et la clé s'active. */

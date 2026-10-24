@@ -124,6 +124,12 @@ Conception : `docs/superpowers/specs/2026-10-24-telephone-v2-design.md`.
   (SHA-256) supprimés, photos animées raccourcies sur place, clips de 4 s au plus retirés, vidéos
   incomplètes recopiées, `.part` orphelins effacés. Les copies `Sent` déjà sur la clé restent
   (rien ne prouve que l'original y est). Bilan affiché en une phrase à la fin.
+- **1.1.1, 100 % automatique** : le rangement tourne dès l'analyse (chez Yayo, tout était déjà
+  copié par le 1.0.1 : le bouton de copie restait grisé et rien n'aurait été rangé). Photos
+  animées de toutes marques, JPEG et HEIC (Samsung S7→S25, Pixel, Xiaomi, OnePlus, Huawei, vivo…),
+  clips iPhone `.MOV` retirés, copies `Sent` déjà sur la clé retirées seulement si leur original
+  y est (empreinte visuelle ; vidéos : images comparées via Media Foundation). Vérifié sur 107
+  vrais fichiers publics : `RealSamplesTests` (ignoré sans `YAYO_VRAIS_FICHIERS`).
 - **Mise à jour automatique** : au démarrage puis toutes les 12 h, le pont lit la dernière release
   GitHub, télécharge le nouvel exe (sans marque internet, donc sans SmartScreen) et se réinstalle
   avec `--maj`, sans ouvrir le site. Le site déclenche aussi `POST /update` quand il trouve un pont

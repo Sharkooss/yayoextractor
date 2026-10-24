@@ -19,7 +19,7 @@
   })();
   const API_REQUIRED = 2;
   // 1.0.x copiait les copies WhatsApp et les clips des photos animées : des doublons sur la clé.
-  const MIN_BRIDGE = "1.1.0";
+  const MIN_BRIDGE = "1.1.1";
   // Mise à jour automatique (pont 1.1.0+) : au-delà de ce délai, on propose de le faire à la main.
   const UPDATE_WAIT = 3 * 60e3;
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -32,6 +32,7 @@
     ["other", "Autres"],
   ];
   const PHASES = {
+    repair: "On range ta clé : doublons et photos animées…",
     drive: "On regarde ce qu'il y a déjà sur la clé…",
     phone: "On parcourt les photos du téléphone…",
     compare: "On compare avec la clé pour éviter les doublons…",
@@ -428,6 +429,7 @@
 
   function resetScan() {
     st.scan = null;
+    st.scanRepair = null;
     st.items = [];
     st.byId.clear();
     st.selected.clear();
@@ -461,7 +463,7 @@
     counters.photos = counters.videos = 0;
     $("scan-photos").textContent = "0";
     $("scan-videos").textContent = "0";
-    $("scan-phase").textContent = PHASES.drive;
+    $("scan-phase").textContent = PHASES.phone;
     try {
       const { jobId } = await call("/scan", { method: "POST", body });
       while (true) {
@@ -476,6 +478,7 @@
         if (job.state === "done") {
           st.scan = { id: jobId, key, deep: !!(body.options && body.options.deep), at: Date.now() };
           loadItems(job.items || []);
+          st.scanRepair = job.repair || null;
           break;
         }
         if (job.state === "error") throw new BridgeError("http", job.error);
@@ -539,6 +542,12 @@
 
   /** La petite ligne « … ne seront pas copiés » sous les filtres. */
   function renderSkipped() {
+    // Le rangement fait pendant l'analyse : chez Yayo, souvent tout est déjà sur la clé
+    // et rien ne sera copié, c'est alors la seule trace de ce qui a été réparé.
+    const repaired = $("gallery-repaired");
+    const fixed = R.repairSentence(st.scanRepair, X() ? "la destination" : "ta clé", !!X(), "scan");
+    repaired.lastElementChild.textContent = fixed;
+    repaired.hidden = !fixed;
     const note = $("gallery-skipped");
     const text = X() ? X().excludedNote() : st.excluded ? R.excludedSentence(st.excluded) : "";
     note.textContent = text;

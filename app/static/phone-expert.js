@@ -135,7 +135,8 @@ window.YayoPhoneExpert = (core) => {
   const scanBody = (target) => ({
     ...target.body,
     phoneId: xs.phoneId || undefined,
-    options: { deep: cfg.deep, rootName: cfg.rootName },
+    // Le pont range la destination dès l'analyse (doublons, photos animées) si on le laisse faire.
+    options: { deep: cfg.deep, rootName: cfg.rootName, repair: cfg.copy.repair, stripMotion: cfg.copy.stripMotion },
   });
 
   /* ---------- Boucle (remplace la détection du mode normal) ---------- */
