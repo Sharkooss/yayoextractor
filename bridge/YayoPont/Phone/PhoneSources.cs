@@ -29,6 +29,24 @@ namespace YayoPont.Phone
         bool UsbSeen();
     }
 
+    /// <summary>
+    /// Le téléphone liste ses fichiers mais refuse d'en livrer le contenu (« Transfert de
+    /// fichiers » MTP qui bloque, liaison périmée…). Le code Windows est gardé : sans lui, 800
+    /// échecs identiques ne disent rien.
+    /// </summary>
+    internal sealed class PhoneReadException : IOException
+    {
+        public PhoneReadException(string message, int code) : base(message, code) { }
+
+        public static PhoneReadException Refused(int code) =>
+            new PhoneReadException($"Le téléphone refuse de donner ce fichier (code 0x{code:X8}).", code);
+
+        /// <summary>Que faire quand tout est refusé : montré tel quel à Yayo.</summary>
+        public static string Advice(int code) =>
+            $"Le téléphone refuse de donner ses photos (code 0x{code:X8}). Débranche-le puis rebranche-le, déverrouille l'écran "
+            + "et choisis « Transfert de fichiers » sur le téléphone. Si ça ne marche toujours pas, essaie « Transfert d'images ».";
+    }
+
     internal static class PhoneSourceExtensions
     {
         /// <summary>Le premier téléphone branché, ou null.</summary>

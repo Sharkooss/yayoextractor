@@ -19,7 +19,7 @@
   })();
   const API_REQUIRED = 2;
   // 1.0.x copiait les copies WhatsApp et les clips des photos animées : des doublons sur la clé.
-  const MIN_BRIDGE = "1.1.1";
+  const MIN_BRIDGE = "1.1.2";
   // Mise à jour automatique (pont 1.1.0+) : au-delà de ce délai, on propose de le faire à la main.
   const UPDATE_WAIT = 3 * 60e3;
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -69,7 +69,8 @@
   const X = () => (expert && expert.active ? expert : null);
 
   /** Mode normal : ni dossiers masqués, ni clips de photos animées, ni doublons du téléphone. */
-  const eligible = (item) => (X() ? X().eligible(item) : !item.hidden && !item.live && !item.duplicateOf);
+  // « unreadable » : le téléphone refuse de livrer ce fichier, le copier ne ferait qu'échouer.
+  const eligible = (item) => !item.unreadable && (X() ? X().eligible(item) : !item.hidden && !item.live && !item.duplicateOf);
   const selectable = (item) => eligible(item) && (!item.onDrive || !!(X() && X().allowOnDrive()));
 
   /** Destination de la copie : la clé choisie (mode normal) ou ce que le mode avancé a réglé. */
@@ -430,6 +431,7 @@
   function resetScan() {
     st.scan = null;
     st.scanRepair = null;
+    st.scanBlocked = null;
     st.items = [];
     st.byId.clear();
     st.selected.clear();
@@ -479,6 +481,7 @@
           st.scan = { id: jobId, key, deep: !!(body.options && body.options.deep), at: Date.now() };
           loadItems(job.items || []);
           st.scanRepair = job.repair || null;
+          st.scanBlocked = job.readError ? { all: !!job.readBlocked, text: job.readError } : null;
           break;
         }
         if (job.state === "error") throw new BridgeError("http", job.error);
@@ -531,7 +534,8 @@
 
   function showGallery() {
     const fresh = st.items.filter(selectable).length;
-    setRail("galerie", "active", fresh ? plural(fresh, "nouvelle", "nouvelles") : "Tout est déjà sur la clé");
+    setRail("galerie", "active", fresh ? plural(fresh, "nouvelle", "nouvelles")
+      : st.scanBlocked && st.scanBlocked.all ? "Le téléphone refuse de livrer ses photos" : "Tout est déjà sur la clé");
     renderChips();
     renderGallery();
     showPanel("galerie");
@@ -548,6 +552,9 @@
     const fixed = R.repairSentence(st.scanRepair, X() ? "la destination" : "ta clé", !!X(), "scan");
     repaired.lastElementChild.textContent = fixed;
     repaired.hidden = !fixed;
+    const blocked = $("gallery-blocked");
+    blocked.lastElementChild.textContent = st.scanBlocked ? st.scanBlocked.text : "";
+    blocked.hidden = !st.scanBlocked;
     const note = $("gallery-skipped");
     const text = X() ? X().excludedNote() : st.excluded ? R.excludedSentence(st.excluded) : "";
     note.textContent = text;
@@ -609,7 +616,9 @@
     if (!shown.length) {
       $("gallery-empty").textContent = st.items.some(eligible)
         ? "Rien à afficher avec ces filtres."
-        : "Aucune photo ni vidéo trouvée sur le téléphone.";
+        : st.scanBlocked && st.scanBlocked.all
+          ? "Le téléphone liste ses photos mais refuse de les donner."
+          : "Aucune photo ni vidéo trouvée sur le téléphone.";
     }
     renderSkipped();
     renderMore();
@@ -1069,14 +1078,16 @@
       : "sur la clé, dans « Photos du téléphone »";
     const repaired = R.repairSentence(job.repair, copy.expert ? "la destination" : "ta clé", copy.expert);
     if (job.state === "done") {
-      $("end-title").textContent = failed.length ? "C'est presque fini" : "C'est fini !";
+      $("end-title").textContent = failed.length ? (job.copied ? "C'est presque fini" : "Rien n'a pu être copié") : "C'est fini !";
       const kinds = st.transferKinds || { photos: job.copied, videos: 0 };
       const what = kinds.photos && kinds.videos ? "photos et vidéos" : kinds.videos ? "vidéos" : "photos";
       const parts = [job.copied
         ? (job.copied > 1
           ? `${job.copied.toLocaleString("fr-FR")} ${what} sont maintenant ${into}.`
           : `C'est copié ${into}.`)
-        : "Rien de nouveau à copier."];
+        : failed.length && !job.skipped
+          ? "Aucune photo n'a pu être copiée."
+          : "Rien de nouveau à copier."];
       if (job.skipped) parts.push(`${job.skipped.toLocaleString("fr-FR")} ${job.skipped > 1 ? "étaient" : "était"} déjà dessus : pas de doublon.`);
       if (repaired) parts.push(repaired);
       $("end-sub").textContent = parts.join(" ");

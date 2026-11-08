@@ -179,6 +179,9 @@ namespace YayoPont
                 ["detailsTotal"] = job.DetailsTotal,
                 ["repair"] = job.Repair,
                 ["error"] = job.Error,
+                ["readBlocked"] = job.ReadBlocked,
+                ["blockedSources"] = job.BlockedSources,
+                ["readError"] = job.ReadError,
             };
             if (job.State == "done") body["items"] = job.Items;
             return HttpResponse.Json(body);

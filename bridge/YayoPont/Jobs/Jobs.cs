@@ -47,6 +47,15 @@ namespace YayoPont.Jobs
         public int DetailsTotal { get; private set; }
         public string Error { get; private set; }
 
+        /// <summary>Le téléphone refuse de livrer le contenu de tous ses fichiers : copier est inutile.</summary>
+        public bool ReadBlocked { get; private set; }
+
+        /// <summary>Provenances (camera, whatsapp…) dont le téléphone refuse de livrer les fichiers.</summary>
+        public List<string> BlockedSources { get; private set; } = new List<string>();
+
+        /// <summary>Ce qu'on dit à Yayo quand une lecture est refusée.</summary>
+        public string ReadError { get; private set; }
+
         /// <summary>Bilan du rangement fait pendant l'analyse (même forme que pour la copie).</summary>
         public RepairReport Repair { get; private set; } = new RepairReport();
 
@@ -76,6 +85,7 @@ namespace YayoPont.Jobs
                 foreach (var file in files) Files[file.Id] = file;
                 MarkLive(files);
                 Live = files.Count(f => f.Live);
+                ProbeReads(phone, files, cancel);
 
                 // Rangement dès l'analyse : chez Yayo tout est déjà sur la clé, la copie ne tournerait jamais.
                 if (options.Repair)
@@ -88,7 +98,7 @@ namespace YayoPont.Jobs
                 Phase = "drive";
                 Index = DuplicateIndex.ForTarget(target);
                 Phase = "compare";
-                MarkDuplicates(phone, files, cancel);
+                if (!ReadBlocked) MarkDuplicates(phone, files, cancel);
                 Duplicates = files.Count(f => f.DuplicateOf != null);
                 foreach (var file in files)
                 {
@@ -96,7 +106,7 @@ namespace YayoPont.Jobs
                     file.OnDrive = Index.IsOnDrive(file.Name, file.Size, () => PhoneHead(phone, file.Id), DuplicateIndex.ReadHead);
                     if (file.OnDrive) OnDriveCount++;
                 }
-                if (options.Deep)
+                if (options.Deep && !ReadBlocked)
                 {
                     Phase = "details";
                     ReadDetails(phone, files, cancel);
@@ -117,6 +127,47 @@ namespace YayoPont.Jobs
                 Log.Error("analyse", ex);
                 State = "error";
                 Error = ex is IOException ? ex.Message : "L'analyse du téléphone a échoué.";
+            }
+        }
+
+        /// <summary>
+        /// Essai de lecture, quelques fichiers par provenance : un téléphone qui liste ses photos mais refuse de
+        /// les livrer (MTP bloqué) le dit tout de suite, au lieu de faire échouer chaque fichier à la copie.
+        /// Les fichiers d'une provenance entièrement refusée sont marqués <see cref="PhoneFile.Unreadable"/>.
+        /// </summary>
+        private void ProbeReads(IPhoneSource phone, IList<PhoneFile> files, CancellationToken cancel)
+        {
+            int code = 0, probedGroups = 0;
+            foreach (var group in files.GroupBy(f => f.Source ?? "other"))
+            {
+                var list = group.ToList();
+                var sample = new[] { 0, list.Count / 2, list.Count - 1 }.Distinct().Select(i => list[i]).ToList();
+                bool blocked = true;
+                foreach (var file in sample)
+                {
+                    cancel.ThrowIfCancellationRequested();
+                    try
+                    {
+                        using (var stream = phone.OpenRead(file.Id))
+                        {
+                            stream.ReadByte();
+                            blocked = false;
+                            break;
+                        }
+                    }
+                    catch (PhoneReadException ex) { code = ex.HResult; }
+                    catch (IOException) { blocked = false; } // fichier ou liaison : pas un refus du téléphone
+                }
+                probedGroups++;
+                if (!blocked) continue;
+                BlockedSources.Add(group.Key);
+                foreach (var file in list) file.Unreadable = true;
+            }
+            ReadBlocked = probedGroups > 0 && BlockedSources.Count == probedGroups;
+            if (BlockedSources.Count > 0)
+            {
+                ReadError = PhoneReadException.Advice(code);
+                Log.Info($"analyse : lecture refusée pour {string.Join(", ", BlockedSources)} (0x{code:X8})");
             }
         }
 
@@ -255,6 +306,7 @@ namespace YayoPont.Jobs
             ExifDate = f.ExifDate,
             Lat = f.Lat,
             Lon = f.Lon,
+            Unreadable = f.Unreadable,
         };
 
         internal static byte[] PhoneHead(IPhoneSource phone, string id)
@@ -317,6 +369,10 @@ namespace YayoPont.Jobs
         private const long MaxInMemory = 200L * 1024 * 1024;
         private const int ErrorDiskFull = unchecked((int)0x80070070);
         private const int ErrorHandleDiskFull = unchecked((int)0x80070027);
+        private const int MaxRefusalsAtStart = 5;
+        private const int MaxRefusalsInARow = 50;
+
+        private int readRefusals;
 
         private readonly CancellationTokenSource cancel = new CancellationTokenSource();
         private readonly object gate = new object();
@@ -432,6 +488,7 @@ namespace YayoPont.Jobs
                 using (var source = phone.OpenRead(file.Id))
                 {
                     var head = ReadUpTo(source, HeadBytes);
+                    readRefusals = 0;
                     var compareHead = head.Length <= DuplicateIndex.HeadSize ? head : head.Take(DuplicateIndex.HeadSize).ToArray();
                     if (options.Dedupe && index.IsOnDrive(file.Name, file.Size, () => compareHead, DuplicateIndex.ReadHead))
                     {
@@ -556,6 +613,21 @@ namespace YayoPont.Jobs
                 State = "error";
                 Error = "La clé a été retirée pendant la copie.";
                 return false;
+            }
+            catch (PhoneReadException ex)
+            {
+                Log.Error("lecture de " + file.RelativePath, ex);
+                Fail(file, ex.Message);
+                Advance(file.Size - counted);
+                // Rien de lu depuis le début, ou une longue série de refus : le téléphone est bloqué, inutile d'enchaîner.
+                readRefusals++;
+                if ((readRefusals >= MaxRefusalsAtStart && Copied + Skipped == 0) || readRefusals >= MaxRefusalsInARow)
+                {
+                    State = "error";
+                    Error = PhoneReadException.Advice(ex.HResult);
+                    return false;
+                }
+                return true;
             }
             catch (Exception ex)
             {

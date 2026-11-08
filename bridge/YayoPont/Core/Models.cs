@@ -50,6 +50,9 @@ namespace YayoPont.Core
         public double? Lon;
         public bool OnDrive;
 
+        /// <summary>Le téléphone a refusé de livrer les fichiers de cette provenance lors de l'essai de lecture.</summary>
+        public bool Unreadable;
+
         /// <summary>Dossier sur le téléphone (chemin relatif sans le nom).</summary>
         public string Folder
         {
@@ -79,5 +82,6 @@ namespace YayoPont.Core
         public DateTime? ExifDate { get; set; }
         public double? Lat { get; set; }
         public double? Lon { get; set; }
+        public bool Unreadable { get; set; }
     }
 }

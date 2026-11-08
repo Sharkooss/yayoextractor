@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Threading;
@@ -68,8 +69,7 @@ namespace YayoPont.Phone
 
         public Stream OpenRead(string id) => Run(() =>
         {
-            var stream = OpenResource(id, Wpd.ResourceDefault, out uint bufferSize);
-            if (stream == null) throw new IOException("Impossible de lire ce fichier sur le téléphone.");
+            var stream = OpenResource(id, Wpd.ResourceDefault, out uint bufferSize, true);
             return (Stream)new WpdStream(this, stream, bufferSize);
         });
 
@@ -77,7 +77,7 @@ namespace YayoPont.Phone
         {
             var thumb = Run(() =>
             {
-                var stream = OpenResource(id, Wpd.ResourceThumbnail, out uint bufferSize);
+                var stream = OpenResource(id, Wpd.ResourceThumbnail, out uint bufferSize, false);
                 return stream == null ? null : ReadAll(stream, bufferSize, 4 * 1024 * 1024);
             });
             if (thumb != null && thumb.Length > 0) return Thumbnails.Normalize(thumb);
@@ -307,17 +307,61 @@ namespace YayoPont.Phone
             return ids;
         }
 
-        private IStream OpenResource(string id, PropertyKey resource, out uint bufferSize)
+        /// <param name="strict">
+        /// Lecture du contenu : un refus lève <see cref="PhoneReadException"/> avec le code Windows, après
+        /// une réouverture du téléphone (liaison périmée). Sinon (vignette), un refus donne simplement null.
+        /// </param>
+        private IStream OpenResource(string id, PropertyKey resource, out uint bufferSize, bool strict)
         {
-            bufferSize = 0;
             var device = CurrentOrFirst();
             if (device == null) throw new IOException("Aucun téléphone branché.");
+            int hr = GetStream(device, id, resource, out bufferSize, out var stream);
+            if (hr < 0 && hr != ErrorNotConnected && strict && Reopen())
+                hr = GetStream(Current, id, resource, out bufferSize, out stream);
+            if (hr == ErrorNotConnected) throw new IOException("Le téléphone a été débranché.");
+            if (hr >= 0) return stream;
+            if (!strict) return null;
+            if (loggedRefusals.Add(hr)) Log.Info($"wpd lecture refusée : 0x{hr:X8} pour {id}");
+            throw PhoneReadException.Refused(hr);
+        }
+
+        private static int GetStream(IPortableDevice device, string id, PropertyKey resource, out uint bufferSize, out IStream stream)
+        {
+            bufferSize = 0;
+            stream = null;
             Check(device.Content(out var content));
             Check(content.Transfer(out var resources));
             var key = resource;
-            int hr = resources.GetStream(id, ref key, Wpd.StgmRead, ref bufferSize, out var stream);
-            if (hr == ErrorNotConnected) throw new IOException("Le téléphone a été débranché.");
-            return hr < 0 ? null : stream;
+            return resources.GetStream(id, ref key, Wpd.StgmRead, ref bufferSize, out stream);
+        }
+
+        // Un code de refus n'est écrit qu'une fois dans le journal (800 lignes identiques n'apprendraient rien).
+        private readonly HashSet<int> loggedRefusals = new HashSet<int>();
+        private DateTime lastReopen = DateTime.MinValue;
+
+        /// <summary>
+        /// Rouvre le téléphone courant : une liaison périmée (débranché puis rebranché, veille) échoue sur
+        /// tout en restant « prête ». Au plus une fois toutes les 15 s, pour ne pas tout rouvrir à chaque fichier.
+        /// </summary>
+        private bool Reopen()
+        {
+            if (currentId == null || DateTime.UtcNow - lastReopen < TimeSpan.FromSeconds(15)) return false;
+            lastReopen = DateTime.UtcNow;
+            var id = currentId;
+            Log.Info("wpd lecture refusée : le téléphone est rouvert");
+            try
+            {
+                Close(id);
+                if (TryOpen(id) == null) return false;
+                currentId = id;
+                return true;
+            }
+            catch (COMException ex)
+            {
+                Log.Error("réouverture de l'appareil " + id, ex);
+                Close(id);
+                return false;
+            }
         }
 
         internal int ReadOnWorker(IStream stream, byte[] buffer, int count) => Run(() =>
@@ -331,6 +375,11 @@ namespace YayoPont.Phone
             catch (COMException ex) when (ex.ErrorCode == ErrorNotConnected)
             {
                 throw new IOException("Le téléphone a été débranché.", ex);
+            }
+            catch (COMException ex)
+            {
+                if (loggedRefusals.Add(ex.ErrorCode)) Log.Info($"wpd lecture interrompue : 0x{ex.ErrorCode:X8}");
+                throw PhoneReadException.Refused(ex.ErrorCode);
             }
             finally
             {
@@ -482,6 +531,7 @@ namespace YayoPont.Phone
                 });
                 done.Wait();
             }
+            if (error is PhoneReadException) ExceptionDispatchInfo.Capture(error).Throw(); // garde son type et son code
             if (error is COMException com && com.ErrorCode == ErrorNotConnected) throw new IOException("Le téléphone a été débranché.", com);
             if (error != null) throw new IOException(error.Message, error);
             return result;
