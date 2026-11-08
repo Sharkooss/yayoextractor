@@ -39,12 +39,16 @@ namespace YayoPont.Phone
             public DateTime? Date;
         }
 
-        private readonly BlockingCollection<Action> queue = new BlockingCollection<Action>();
-        private readonly Thread worker;
+        /// <summary>Un appel au téléphone (ouvrir un fichier, lire un bloc) qui ne répond pas en 20 s est abandonné.</summary>
+        private const int CallTimeoutMs = 20000;
+
+        // Remplacés ensemble si le thread WPD reste bloqué dans un appel du téléphone (voir OnNoAnswer).
+        private volatile BlockingCollection<Action> queue = new BlockingCollection<Action>();
+        private volatile Thread worker;
         private readonly Dictionary<string, PhoneFile> known = new Dictionary<string, PhoneFile>();
 
         // Uniquement sur le thread WPD.
-        private readonly Dictionary<string, Opened> opened = new Dictionary<string, Opened>(StringComparer.Ordinal);
+        private Dictionary<string, Opened> opened = new Dictionary<string, Opened>(StringComparer.Ordinal);
         // Appareils WPD qui ne sont pas des téléphones (clés USB en « MSC ») : pas rouverts à chaque sondage.
         private readonly HashSet<string> notPhones = new HashSet<string>(StringComparer.Ordinal);
         private List<string> order = new List<string>();
@@ -53,16 +57,23 @@ namespace YayoPont.Phone
 
         public WpdPhoneSource()
         {
-            worker = new Thread(() =>
-            {
-                foreach (var work in queue.GetConsumingEnumerable()) work();
-            })
-            { IsBackground = true, Name = "wpd" };
-            worker.SetApartmentState(ApartmentState.MTA);
-            worker.Start();
+            StartWorker();
         }
 
-        public IList<PhoneInfo> Phones() => Run(PhonesOnWorker);
+        private void StartWorker()
+        {
+            var mine = queue;
+            var thread = new Thread(() =>
+            {
+                foreach (var work in mine.GetConsumingEnumerable()) work();
+            })
+            { IsBackground = true, Name = "wpd" };
+            thread.SetApartmentState(ApartmentState.MTA);
+            worker = thread;
+            thread.Start();
+        }
+
+        public IList<PhoneInfo> Phones() => Run(PhonesOnWorker, 3 * CallTimeoutMs);
 
         public IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel) =>
             Run(() => EnumerateOnWorker(phoneId, found, cancel));
@@ -71,7 +82,7 @@ namespace YayoPont.Phone
         {
             var stream = OpenResource(id, Wpd.ResourceDefault, out uint bufferSize, true);
             return (Stream)new WpdStream(this, stream, bufferSize);
-        });
+        }, CallTimeoutMs);
 
         public byte[] Thumbnail(string id)
         {
@@ -79,7 +90,7 @@ namespace YayoPont.Phone
             {
                 var stream = OpenResource(id, Wpd.ResourceThumbnail, out uint bufferSize, false);
                 return stream == null ? null : ReadAll(stream, bufferSize, 4 * 1024 * 1024);
-            });
+            }, CallTimeoutMs);
             if (thumb != null && thumb.Length > 0) return Thumbnails.Normalize(thumb);
             PhoneFile file;
             lock (known) known.TryGetValue(id, out file);
@@ -308,21 +319,35 @@ namespace YayoPont.Phone
         }
 
         /// <param name="strict">
-        /// Lecture du contenu : un refus lève <see cref="PhoneReadException"/> avec le code Windows, après
-        /// une réouverture du téléphone (liaison périmée). Sinon (vignette), un refus donne simplement null.
+        /// Lecture du contenu : un fichier que le téléphone ne connaît plus lève <see cref="PhoneFileGoneException"/>
+        /// (sans le demander à WPD : sur l'A14, cela prenait une minute), un refus lève
+        /// <see cref="PhoneReadException"/> avec le code Windows. Sinon (vignette), un refus donne simplement null.
         /// </param>
         private IStream OpenResource(string id, PropertyKey resource, out uint bufferSize, bool strict)
         {
+            bufferSize = 0;
             var device = CurrentOrFirst();
             if (device == null) throw new IOException("Aucun téléphone branché.");
+            if (strict && !StillThere(device, id)) throw new PhoneFileGoneException();
             int hr = GetStream(device, id, resource, out bufferSize, out var stream);
-            if (hr < 0 && hr != ErrorNotConnected && strict && Reopen())
-                hr = GetStream(Current, id, resource, out bufferSize, out stream);
             if (hr == ErrorNotConnected) throw new IOException("Le téléphone a été débranché.");
             if (hr >= 0) return stream;
             if (!strict) return null;
             if (loggedRefusals.Add(hr)) Log.Info($"wpd lecture refusée : 0x{hr:X8} pour {id}");
             throw PhoneReadException.Refused(hr);
+        }
+
+        /// <summary>Le téléphone connaît encore cet objet (une lecture de propriété, bien plus rapide qu'une lecture de contenu).</summary>
+        private static bool StillThere(IPortableDevice device, string id)
+        {
+            Check(device.Content(out var content));
+            Check(content.Properties(out var props));
+            var keys = Keys(Wpd.ObjectName);
+            var values = Values(props, id, keys);
+            Release(keys);
+            if (values == null) return false;
+            Release(values);
+            return true;
         }
 
         private static int GetStream(IPortableDevice device, string id, PropertyKey resource, out uint bufferSize, out IStream stream)
@@ -337,32 +362,6 @@ namespace YayoPont.Phone
 
         // Un code de refus n'est écrit qu'une fois dans le journal (800 lignes identiques n'apprendraient rien).
         private readonly HashSet<int> loggedRefusals = new HashSet<int>();
-        private DateTime lastReopen = DateTime.MinValue;
-
-        /// <summary>
-        /// Rouvre le téléphone courant : une liaison périmée (débranché puis rebranché, veille) échoue sur
-        /// tout en restant « prête ». Au plus une fois toutes les 15 s, pour ne pas tout rouvrir à chaque fichier.
-        /// </summary>
-        private bool Reopen()
-        {
-            if (currentId == null || DateTime.UtcNow - lastReopen < TimeSpan.FromSeconds(15)) return false;
-            lastReopen = DateTime.UtcNow;
-            var id = currentId;
-            Log.Info("wpd lecture refusée : le téléphone est rouvert");
-            try
-            {
-                Close(id);
-                if (TryOpen(id) == null) return false;
-                currentId = id;
-                return true;
-            }
-            catch (COMException ex)
-            {
-                Log.Error("réouverture de l'appareil " + id, ex);
-                Close(id);
-                return false;
-            }
-        }
 
         internal int ReadOnWorker(IStream stream, byte[] buffer, int count) => Run(() =>
         {
@@ -385,9 +384,9 @@ namespace YayoPont.Phone
             {
                 Marshal.FreeCoTaskMem(readPtr);
             }
-        });
+        }, CallTimeoutMs);
 
-        internal void ReleaseOnWorker(object comObject) => Run<object>(() => { Release(comObject); return null; });
+        internal void ReleaseOnWorker(object comObject) => Run<object>(() => { Release(comObject); return null; }, CallTimeoutMs);
 
         private static byte[] ReadAll(IStream stream, uint bufferSize, int max)
         {
@@ -516,25 +515,54 @@ namespace YayoPont.Phone
             if (comObject != null && Marshal.IsComObject(comObject)) Marshal.ReleaseComObject(comObject);
         }
 
-        private T Run<T>(Func<T> work)
+        /// <param name="timeoutMs">0 : on attend autant qu'il faut (inventaire) ; sinon l'appel est annulé puis abandonné.</param>
+        private T Run<T>(Func<T> work, int timeoutMs = 0)
         {
             if (Thread.CurrentThread == worker) return work();
             T result = default;
             Exception error = null;
-            using (var done = new ManualResetEventSlim())
+            // Pas de « using » : après un délai dépassé, le thread WPD peut encore le signaler.
+            var done = new ManualResetEventSlim();
+            queue.Add(() =>
             {
-                queue.Add(() =>
-                {
-                    try { result = work(); }
-                    catch (Exception ex) { error = ex; }
-                    finally { done.Set(); }
-                });
-                done.Wait();
+                try { result = work(); }
+                catch (Exception ex) { error = ex; }
+                finally { done.Set(); }
+            });
+            if (timeoutMs <= 0) done.Wait();
+            else if (!done.Wait(timeoutMs))
+            {
+                OnNoAnswer(done);
+                throw PhoneReadException.NoAnswer();
             }
-            if (error is PhoneReadException) ExceptionDispatchInfo.Capture(error).Throw(); // garde son type et son code
+            if (error is PhoneReadException || error is PhoneFileGoneException) ExceptionDispatchInfo.Capture(error).Throw(); // garde son type et son code
             if (error is COMException com && com.ErrorCode == ErrorNotConnected) throw new IOException("Le téléphone a été débranché.", com);
             if (error != null) throw new IOException(error.Message, error);
             return result;
+        }
+
+        /// <summary>
+        /// Le thread WPD est coincé dans un appel que le téléphone ne termine pas (sur l'A14, un fichier
+        /// disparu : plus d'une minute, puis tout restait figé). D'abord on demande à Windows d'annuler ;
+        /// si rien ne bouge, ce thread est abandonné et un neuf reprend, avec une liaison rouverte au besoin.
+        /// </summary>
+        private void OnNoAnswer(ManualResetEventSlim done)
+        {
+            Log.Info("wpd : appel sans réponse après " + CallTimeoutMs / 1000 + " s, annulation");
+            try
+            {
+                // Le thread WPD est bloqué : il ne touche pas à « opened » pendant ce temps.
+                if (currentId != null && opened.TryGetValue(currentId, out var o)) o.Device.Cancel();
+            }
+            catch (Exception ex) when (ex is COMException || ex is InvalidOperationException) { }
+            if (done.Wait(10000)) return;
+            Log.Info("wpd : thread bloqué abandonné, liaison au téléphone refaite");
+            var stuck = queue;
+            queue = new BlockingCollection<Action>();
+            opened = new Dictionary<string, Opened>(StringComparer.Ordinal);
+            currentId = null;
+            StartWorker();
+            stuck.CompleteAdding(); // si le thread bloqué finit un jour, il s'arrête
         }
     }
 
@@ -570,7 +598,12 @@ namespace YayoPont.Phone
 
         protected override void Dispose(bool disposing)
         {
-            if (!disposed) owner.ReleaseOnWorker(stream);
+            if (!disposed)
+            {
+                // Un Release qui ne répond pas ne doit pas faire échouer la copie du fichier.
+                try { owner.ReleaseOnWorker(stream); }
+                catch (IOException) { }
+            }
             disposed = true;
             base.Dispose(disposing);
         }

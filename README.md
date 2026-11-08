@@ -133,11 +133,17 @@ Conception : `docs/superpowers/specs/2026-10-24-telephone-v2-design.md`.
 - **1.1.2, téléphone qui refuse de livrer ses fichiers** : sur le S23 de Yayo, le mode « Transfert de
   fichiers » (MTP) liste les photos mais `GetStream` renvoie `0x80070141` ; l'ancien pont avalait le
   code et alignait 794 échecs, puis le site annonçait « Rien de nouveau à copier ». Maintenant : le
-  code est journalisé (`pont.log`, une fois par code) et affiché ; le pont rouvre le téléphone une
-  fois (liaison périmée) avant de renoncer ; l'analyse essaie de lire 3 fichiers par provenance et
-  signale (bandeau rouge) ceux que le téléphone refuse, exclus de la sélection ; la copie s'arrête
-  après 5 refus sans rien de copié (ou 50 de suite). Le mode « Transfert d'images » (PTP) lit mais ne
-  montre que DCIM et Pictures : les photos WhatsApp n'y sont pas.
+  code est journalisé (`pont.log`, une fois par code) et affiché ; l'analyse essaie de lire 3 fichiers
+  par provenance et signale (bandeau rouge) ceux que le téléphone refuse, exclus de la sélection ; la
+  copie s'arrête après 5 refus sans rien de copié (ou 50 de suite). Le mode « Transfert d'images »
+  (PTP) lit mais ne montre que DCIM et Pictures : les photos WhatsApp n'y sont pas.
+- **1.1.3, A14 de Nelly : fichiers disparus et appels sans réponse** : l'inventaire voyait deux
+  fichiers temporaires que le téléphone ne connaissait plus ; les lire prenait une minute
+  (`0x80070079`), puis le pont restait figé (la 1.1.2 rouvrait le téléphone à ce moment-là : retiré,
+  rien ne prouvait son utilité). Maintenant : un fichier que le téléphone ne connaît plus est passé
+  tout de suite (« n'est plus sur le téléphone », sans compter comme refus) ; chaque appel au
+  téléphone a 20 s, puis Windows est prié d'annuler et, sans réaction 10 s de plus, le thread WPD
+  bloqué est abandonné pour un neuf. Le délai compte comme un refus (code `0x80070079`).
 - **Mise à jour automatique** : au démarrage puis toutes les 12 h, le pont lit la dernière release
   GitHub, télécharge le nouvel exe (sans marque internet, donc sans SmartScreen) et se réinstalle
   avec `--maj`, sans ouvrir le site. Le site déclenche aussi `POST /update` quand il trouve un pont

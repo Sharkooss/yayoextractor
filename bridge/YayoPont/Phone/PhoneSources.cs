@@ -38,13 +38,28 @@ namespace YayoPont.Phone
     {
         public PhoneReadException(string message, int code) : base(message, code) { }
 
+        public const int TimeoutCode = unchecked((int)0x80070079); // ERROR_SEM_TIMEOUT, aussi renvoyé par WPD lui-même
+
         public static PhoneReadException Refused(int code) =>
-            new PhoneReadException($"Le téléphone refuse de donner ce fichier (code 0x{code:X8}).", code);
+            new PhoneReadException($"Le téléphone ne donne pas ce fichier (code 0x{code:X8}).", code);
+
+        /// <summary>Un appel au téléphone est resté sans réponse : on ne l'attend pas indéfiniment.</summary>
+        public static PhoneReadException NoAnswer() =>
+            new PhoneReadException($"Le téléphone ne répond plus (code 0x{TimeoutCode:X8}).", TimeoutCode);
 
         /// <summary>Que faire quand tout est refusé : montré tel quel à Yayo.</summary>
         public static string Advice(int code) =>
-            $"Le téléphone refuse de donner ses photos (code 0x{code:X8}). Débranche-le puis rebranche-le, déverrouille l'écran "
+            $"Le téléphone n'arrive pas à donner ses photos (code 0x{code:X8}). Débranche-le puis rebranche-le, déverrouille l'écran "
             + "et choisis « Transfert de fichiers » sur le téléphone. Si ça ne marche toujours pas, essaie « Transfert d'images ».";
+    }
+
+    /// <summary>
+    /// Fichier que l'analyse a vu mais que le téléphone ne connaît plus (fichier temporaire, supprimé entre
+    /// l'inventaire et la lecture). Ce n'est pas un refus du téléphone : on passe au suivant.
+    /// </summary>
+    internal sealed class PhoneFileGoneException : IOException
+    {
+        public PhoneFileGoneException() : base("Ce fichier n'est plus sur le téléphone.") { }
     }
 
     internal static class PhoneSourceExtensions

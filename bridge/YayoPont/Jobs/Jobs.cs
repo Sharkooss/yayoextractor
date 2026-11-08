@@ -103,7 +103,7 @@ namespace YayoPont.Jobs
                 foreach (var file in files)
                 {
                     cancel.ThrowIfCancellationRequested();
-                    file.OnDrive = Index.IsOnDrive(file.Name, file.Size, () => PhoneHead(phone, file.Id), DuplicateIndex.ReadHead);
+                    file.OnDrive = Index.IsOnDrive(file.Name, file.Size, () => ReadBlocked ? null : PhoneHead(phone, file.Id), DuplicateIndex.ReadHead);
                     if (file.OnDrive) OnDriveCount++;
                 }
                 if (options.Deep && !ReadBlocked)

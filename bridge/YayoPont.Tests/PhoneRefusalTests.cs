@@ -137,6 +137,46 @@ namespace YayoPont.Tests
             }
         }
 
+        /// <summary>Fichiers vus à l'inventaire que le téléphone ne connaît plus (temporaires de l'A14).</summary>
+        private sealed class GonePhone : IPhoneSource
+        {
+            private readonly IPhoneSource inner;
+            private readonly Func<string, bool> gone;
+
+            public GonePhone(IPhoneSource inner, Func<string, bool> gone)
+            {
+                this.inner = inner;
+                this.gone = gone;
+            }
+
+            public IList<PhoneInfo> Phones() => inner.Phones();
+            public IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel) => inner.Enumerate(phoneId, found, cancel);
+            public byte[] Thumbnail(string id) => inner.Thumbnail(id);
+            public bool UsbSeen() => inner.UsbSeen();
+            public void Dispose() => inner.Dispose();
+            public Stream OpenRead(string id) => gone(id) ? throw new PhoneFileGoneException() : inner.OpenRead(id);
+        }
+
+        [Fact]
+        public void Des_fichiers_disparus_sont_passes_sans_arreter_ni_marquer_le_telephone()
+        {
+            // Dix d'affilée au début : ce ne sont pas des refus du téléphone, la copie continue.
+            using (var phone = new GonePhone(new FolderPhoneSource(phoneDir), id => id.StartsWith("Android") && !id.EndsWith("0000.jpg") && !id.EndsWith("0011.jpg")))
+            {
+                var scan = new ScanJob();
+                scan.Run(phone, Drive(), CancellationToken.None);
+                Assert.False(scan.ReadBlocked);
+                Assert.Empty(scan.BlockedSources);
+
+                var job = new TransferJob();
+                job.Run(phone, Drive(), scan.Files.Values.Where(f => f.Source == "whatsapp").ToList(), scan.Index);
+                Assert.Equal("done", job.State);
+                Assert.Equal(2, job.Copied);
+                Assert.Equal(10, job.Failed.Count);
+                Assert.All(job.Failed, f => Assert.Contains("n'est plus sur le téléphone", f.Error));
+            }
+        }
+
         [Fact]
         public void Quelques_refus_isoles_ne_bloquent_pas_la_copie()
         {
