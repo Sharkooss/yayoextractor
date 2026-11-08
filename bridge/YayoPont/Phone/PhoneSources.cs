@@ -50,7 +50,9 @@ namespace YayoPont.Phone
         /// <summary>Que faire quand tout est refusé : montré tel quel à Yayo.</summary>
         public static string Advice(int code) =>
             $"Le téléphone n'arrive pas à donner ses photos (code 0x{code:X8}). Débranche-le puis rebranche-le, déverrouille l'écran "
-            + "et choisis « Transfert de fichiers » sur le téléphone. Si ça ne marche toujours pas, essaie « Transfert d'images ».";
+            + "et choisis « Transfert de fichiers » sur le téléphone. Si ça ne marche toujours pas, essaie « Transfert d'images ». "
+            + "En attendant, tu peux copier le dossier DCIM\\Camera du téléphone avec l'Explorateur de fichiers "
+            + "(les photos WhatsApp ne seront pas dedans).";
     }
 
     /// <summary>
