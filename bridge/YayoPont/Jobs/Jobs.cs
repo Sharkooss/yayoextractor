@@ -32,6 +32,12 @@ namespace YayoPont.Jobs
     {
         /// <summary>Un clip de photo animée fait quelques secondes : au-delà, c'est une vraie vidéo.</summary>
         public const long LiveMaxBytes = KeyRepair.LiveMaxBytes;
+        /// <summary>Temps maximal de la comparaison des doublons du téléphone.</summary>
+        internal static readonly TimeSpan CompareBudget = TimeSpan.FromSeconds(150);
+
+        /// <summary>Fichiers illisibles de suite après lesquels on cesse de lire le téléphone pour comparer.</summary>
+        internal const int MaxHeadMisses = 8;
+
         private const int DetailsPhotoHead = 256 * 1024;
         private const int DetailsVideoHead = 512 * 1024;
 
@@ -56,6 +62,8 @@ namespace YayoPont.Jobs
         public int Hidden { get; private set; }
         public int Live { get; private set; }
         public int Duplicates { get; private set; }
+        public int CompareDone { get; private set; }
+        public int CompareTotal { get; private set; }
         public int DetailsDone { get; private set; }
         public int DetailsTotal { get; private set; }
         public string Error { get; private set; }
@@ -115,12 +123,20 @@ namespace YayoPont.Jobs
                 Phase = "drive";
                 Index = DuplicateIndex.ForTarget(target);
                 Phase = "compare";
-                if (!ReadBlocked) MarkDuplicates(phone, files, cancel);
+                if (!ReadBlocked) MarkDuplicates(phone, files, cancel, (done, all) => { CompareDone = done; CompareTotal = all; });
                 Duplicates = files.Count(f => f.DuplicateOf != null);
+                int headMisses = 0;
+                byte[] Head(PhoneFile f)
+                {
+                    if (ReadBlocked || headMisses >= MaxHeadMisses) return null;
+                    var head = PhoneHead(phone, f.Id);
+                    headMisses = head == null ? headMisses + 1 : 0;
+                    return head;
+                }
                 foreach (var file in files)
                 {
                     cancel.ThrowIfCancellationRequested();
-                    file.OnDrive = Index.IsOnDrive(file.Name, file.Size, () => ReadBlocked ? null : PhoneHead(phone, file.Id), DuplicateIndex.ReadHead);
+                    file.OnDrive = Index.IsOnDrive(file.Name, file.Size, () => Head(file), DuplicateIndex.ReadHead);
                     if (file.OnDrive) OnDriveCount++;
                 }
                 if (options.Deep && !ReadBlocked)
@@ -235,19 +251,40 @@ namespace YayoPont.Jobs
         /// (seuls les fichiers de même taille sont lus). On garde un élément visible
         /// dans la Galerie, de l'appareil photo, sans « (n) » dans le nom, sinon le premier.
         /// </summary>
-        internal static void MarkDuplicates(IPhoneSource phone, IList<PhoneFile> files, CancellationToken cancel)
+        /// <param name="onProgress">appelée avec (fichiers lus, fichiers à lire).</param>
+        /// <param name="budget">
+        /// Au-delà, la comparaison s'arrête : les doublons non repérés seront simplement copiés (le rangement les
+        /// retire ensuite). Un inventaire de 5 minutes qui ne dit rien vaut moins que des doublons qui restent un moment.
+        /// </param>
+        internal static void MarkDuplicates(IPhoneSource phone, IList<PhoneFile> files, CancellationToken cancel,
+            Action<int, int> onProgress = null, TimeSpan? budget = null)
         {
             var position = new Dictionary<PhoneFile, int>();
             for (int i = 0; i < files.Count; i++) position[files[i]] = i;
+            var groups = files.Where(f => f.Size > 0).GroupBy(f => f.Size).Where(g => g.Count() > 1).ToList();
+            int total = groups.Sum(g => g.Count()), read = 0, misses = 0;
+            var clock = Stopwatch.StartNew();
+            var limit = budget ?? CompareBudget;
+            bool stopped = false;
+            onProgress?.Invoke(0, total);
             using (var sha = SHA256.Create())
             {
-                foreach (var sameSize in files.Where(f => f.Size > 0).GroupBy(f => f.Size).Where(g => g.Count() > 1))
+                foreach (var sameSize in groups)
                 {
+                    if (stopped) break;
                     var byHead = new Dictionary<string, List<PhoneFile>>();
                     foreach (var file in sameSize)
                     {
                         cancel.ThrowIfCancellationRequested();
+                        if (clock.Elapsed > limit || misses >= MaxHeadMisses)
+                        {
+                            stopped = true;
+                            Log.Info($"analyse : comparaison interrompue après {clock.Elapsed.TotalSeconds:0} s ({read} sur {total} fichiers lus, {misses} illisibles de suite)");
+                            break;
+                        }
                         var head = PhoneHead(phone, file.Id);
+                        onProgress?.Invoke(++read, total);
+                        misses = head == null ? misses + 1 : 0;
                         if (head == null) continue;
                         var key = Convert.ToBase64String(sha.ComputeHash(head));
                         if (!byHead.TryGetValue(key, out var list)) byHead[key] = list = new List<PhoneFile>();

@@ -19,7 +19,7 @@
   })();
   const API_REQUIRED = 2;
   // 1.0.x copiait les copies WhatsApp et les clips des photos animées : des doublons sur la clé.
-  const MIN_BRIDGE = "1.1.6";
+  const MIN_BRIDGE = "1.1.7";
   // Mise à jour automatique (pont 1.1.0+) : au-delà de ce délai, on propose de le faire à la main.
   const UPDATE_WAIT = 3 * 60e3;
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -373,7 +373,10 @@
 
   function showTelephone(d) {
     showPanel("telephone");
-    const state = d.phone && d.phone.state === "locked" ? "locked:" + d.phone.name : d.usbPhoneSeen ? "charging" : "none";
+    const state = (d.phone && d.phone.state === "locked" ? "locked:" + d.phone.name : d.usbPhoneSeen ? "charging" : "none") + "|" + (d.problem || "");
+    const problem = $("tel-problem");
+    problem.textContent = d.problem ? `Ce que répond Windows : ${d.problem}` : "";
+    problem.hidden = !d.problem;
     if (state === telState) return;
     telState = state;
     drivesKey = null;
@@ -397,7 +400,8 @@
     } else if (d.usbPhoneSeen) {
       scene.classList.add("waiting-phone");
       $("tel-title").textContent = "Ton téléphone se recharge seulement";
-      $("tel-text").textContent = "Sur le téléphone : fais glisser le haut de l'écran vers le bas, touche la notification USB, puis choisis « Transfert de fichiers ».";
+      $("tel-text").textContent = "Sur le téléphone : fais glisser le haut de l'écran vers le bas, touche la notification USB, puis choisis « Transfert de fichiers ». "
+        + "Si c'est déjà le cas : débranche puis rebranche le câble, déverrouille l'écran, et ferme Smart Switch ou « Lien avec Windows » s'ils sont ouverts.";
       help.innerHTML = `
         <div class="mini-phone"><div class="mini-screen">
           <div class="mini-notif mock-target"><b>Système Android</b>Recharge de cet appareil via USB<br>Appuyez pour plus d'options.</div>
@@ -517,6 +521,9 @@
         let phase = PHASES[job.phase] || PHASES.phone;
         if (job.phase === "details" && job.detailsTotal) {
           phase += ` (${(job.detailsDone || 0).toLocaleString("fr-FR")} sur ${job.detailsTotal.toLocaleString("fr-FR")})`;
+        }
+        if (job.phase === "compare" && job.compareTotal) {
+          phase += ` (${(job.compareDone || 0).toLocaleString("fr-FR")} sur ${job.compareTotal.toLocaleString("fr-FR")})`;
         }
         $("scan-phase").textContent = phase;
         if (job.state === "done") {

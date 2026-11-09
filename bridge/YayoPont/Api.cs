@@ -121,6 +121,7 @@ namespace YayoPont
                     // Un sondage raté (téléphone qui ne répond pas) ne veut pas dire « débranché » :
                     // on garde le dernier état connu, sinon le site retombe à l'étape « branche ton téléphone ».
                     Log.Error("détection du téléphone", ex);
+                    WpdPhoneSource.LastProblem = "Le téléphone ne répond pas à Windows : " + ex.Message;
                     phones = lastPhones;
                 }
             }
@@ -138,6 +139,7 @@ namespace YayoPont
                 ["phone"] = chosen,
                 ["phones"] = phones,
                 ["usbPhoneSeen"] = phones.Count == 0 && phone.UsbSeen(),
+                ["problem"] = phones.Count == 0 ? WpdPhoneSource.LastProblem : null,
                 ["drives"] = list,
             });
         }
@@ -182,6 +184,8 @@ namespace YayoPont
                 ["hidden"] = job.Hidden,
                 ["live"] = job.Live,
                 ["duplicates"] = job.Duplicates,
+                ["compareDone"] = job.CompareDone,
+                ["compareTotal"] = job.CompareTotal,
                 ["detailsDone"] = job.DetailsDone,
                 ["detailsTotal"] = job.DetailsTotal,
                 ["repair"] = job.Repair,

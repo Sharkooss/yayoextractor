@@ -42,6 +42,13 @@ namespace YayoPont.Phone
         /// <summary>Un appel au téléphone (ouvrir un fichier, lire un bloc) qui ne répond pas en 20 s est abandonné.</summary>
         private const int CallTimeoutMs = 20000;
 
+        /// <summary>L'inventaire est coupé si aucun objet du téléphone n'est lu pendant 90 s.</summary>
+        private const int StallMs = 90000;
+
+        private long progressTicks = DateTime.UtcNow.Ticks;
+
+        private void Progress() => Interlocked.Exchange(ref progressTicks, DateTime.UtcNow.Ticks);
+
         // Remplacés ensemble si le thread WPD reste bloqué dans un appel du téléphone (voir OnNoAnswer).
         private volatile BlockingCollection<Action> queue = new BlockingCollection<Action>();
         private volatile Thread worker;
@@ -76,7 +83,7 @@ namespace YayoPont.Phone
         public IList<PhoneInfo> Phones() => Run(PhonesOnWorker, 3 * CallTimeoutMs);
 
         public IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel) =>
-            Run(() => EnumerateOnWorker(phoneId, found, cancel));
+            Run(() => EnumerateOnWorker(phoneId, found, cancel), 0, StallMs);
 
         public Stream OpenRead(string id) => Run(() =>
         {
@@ -114,8 +121,18 @@ namespace YayoPont.Phone
 
         private IPortableDevice Current => currentId != null && opened.TryGetValue(currentId, out var o) ? o.Device : null;
 
+        /// <summary>Dernière raison pour laquelle aucun téléphone n'est utilisable (null : aucune). Montrée sur le site.</summary>
+        public static volatile string LastProblem;
+
+        private static void Problem(string text)
+        {
+            if (LastProblem != text) Log.Info("wpd : " + text);
+            LastProblem = text;
+        }
+
         private IList<PhoneInfo> PhonesOnWorker()
         {
+            LastProblem = null;
             Trace("detect: manager");
             if (manager == null) manager = Wpd.Create<IPortableDeviceManager>(Wpd.ClsidManager);
             manager.RefreshDeviceList();
@@ -177,11 +194,18 @@ namespace YayoPont.Phone
             Trace("open: " + id);
             var candidate = Wpd.Create<IPortableDevice>(Wpd.ClsidDeviceFtm);
             Trace("open: créé");
-            if (candidate.Open(id, ClientInfo()) < 0) { Release(candidate); return null; }
+            int openHr = candidate.Open(id, ClientInfo());
+            if (openHr < 0)
+            {
+                Release(candidate);
+                Problem($"Windows n'a pas pu ouvrir le téléphone (code 0x{openHr:X8}). Un autre programme l'utilise peut-être : Explorateur, Smart Switch, Lien avec Windows.");
+                return null;
+            }
             Trace("open: ouvert");
             if (!candidate.Content(out var content).Ok() || !content.Properties(out var props).Ok())
             {
                 CloseQuietly(candidate);
+                Problem("Le téléphone s'est ouvert mais ne répond pas à Windows.");
                 return null;
             }
             Trace("open: contenu et propriétés");
@@ -253,21 +277,30 @@ namespace YayoPont.Phone
             {
                 // Tous les enfants d'abord : le « .nomedia » peut venir après les photos.
                 var children = new List<Child>();
-                foreach (var id in Children(device, parent))
+                try
                 {
-                    cancel.ThrowIfCancellationRequested();
-                    var values = Values(props, id, keys);
-                    if (values == null) continue;
-                    var type = Guid(values, Wpd.ObjectContentType);
-                    children.Add(new Child
+                    foreach (var id in Children(device, parent))
                     {
-                        Id = id,
-                        Name = String(values, Wpd.ObjectOriginalFileName) ?? String(values, Wpd.ObjectName) ?? id,
-                        Folder = type == Wpd.ContentTypeFolder || type == Wpd.ContentTypeFunctionalObject,
-                        Size = (long)ULong(values, Wpd.ObjectSize),
-                        Date = Date(values, Wpd.ObjectDateCreated) ?? Date(values, Wpd.ObjectDateModified),
-                    });
-                    Release(values);
+                        cancel.ThrowIfCancellationRequested();
+                        Progress();
+                        var values = Values(props, id, keys);
+                        if (values == null) continue;
+                        var type = Guid(values, Wpd.ObjectContentType);
+                        children.Add(new Child
+                        {
+                            Id = id,
+                            Name = String(values, Wpd.ObjectOriginalFileName) ?? String(values, Wpd.ObjectName) ?? id,
+                            Folder = type == Wpd.ContentTypeFolder || type == Wpd.ContentTypeFunctionalObject,
+                            Size = (long)ULong(values, Wpd.ObjectSize),
+                            Date = Date(values, Wpd.ObjectDateCreated) ?? Date(values, Wpd.ObjectDateModified),
+                        });
+                        Release(values);
+                    }
+                }
+                catch (COMException ex)
+                {
+                    // Un dossier qui se lit mal ne doit pas faire perdre tout l'inventaire : on garde ce qui a été lu.
+                    Log.Error("inventaire : dossier illisible « " + relative + " »", ex);
                 }
                 bool hidden = GalleryRules.FolderHidden(parentHidden, relative, children.Where(c => !c.Folder).Select(c => c.Name));
                 foreach (var child in children)
@@ -306,6 +339,7 @@ namespace YayoPont.Phone
             while (true)
             {
                 uint fetched = 0;
+                Progress();
                 int hr = objects.Next((uint)batch.Length, batch, ref fetched);
                 for (int i = 0; i < fetched; i++)
                 {
@@ -516,7 +550,7 @@ namespace YayoPont.Phone
         }
 
         /// <param name="timeoutMs">0 : on attend autant qu'il faut (inventaire) ; sinon l'appel est annulé puis abandonné.</param>
-        private T Run<T>(Func<T> work, int timeoutMs = 0)
+        private T Run<T>(Func<T> work, int timeoutMs = 0, int stallMs = 0)
         {
             if (Thread.CurrentThread == worker) return work();
             T result = default;
@@ -529,7 +563,20 @@ namespace YayoPont.Phone
                 catch (Exception ex) { error = ex; }
                 finally { done.Set(); }
             });
-            if (timeoutMs <= 0) done.Wait();
+            if (timeoutMs <= 0 && stallMs > 0)
+            {
+                // Appel long mais qui avance (inventaire) : on ne coupe que s'il ne progresse plus depuis StallMs.
+                Progress();
+                while (!done.Wait(5000))
+                {
+                    var idle = DateTime.UtcNow - new DateTime(Interlocked.Read(ref progressTicks), DateTimeKind.Utc);
+                    if (idle.TotalMilliseconds < stallMs) continue;
+                    Log.Info("wpd : l'inventaire n'avance plus depuis " + (int)idle.TotalSeconds + " s");
+                    OnNoAnswer(done);
+                    throw PhoneReadException.NoAnswer();
+                }
+            }
+            else if (timeoutMs <= 0) done.Wait();
             else if (!done.Wait(timeoutMs))
             {
                 OnNoAnswer(done);

@@ -178,6 +178,31 @@ namespace YayoPont.Tests
         }
 
         [Fact]
+        public void La_comparaison_des_doublons_s_arrete_au_bout_de_son_budget()
+        {
+            // Mêmes tailles partout : tout serait lu. Budget nul : rien n'est lu, l'analyse continue quand même.
+            var same = Enumerable.Range(0, 6).Select(i => new PhoneFile { Id = $"DCIM/Camera/IMG_{i}.jpg", Name = $"IMG_{i}.jpg", Size = 2000 }).ToList();
+            using (var phone = new RefusingPhone(new FolderPhoneSource(phoneDir), _ => false))
+            {
+                ScanJob.MarkDuplicates(phone, same, CancellationToken.None, null, TimeSpan.Zero);
+                Assert.Equal(0, phone.Opened);
+                Assert.All(same, f => Assert.Null(f.DuplicateOf));
+            }
+        }
+
+        [Fact]
+        public void La_comparaison_cesse_de_lire_apres_des_fichiers_illisibles_de_suite()
+        {
+            var same = Enumerable.Range(0, 30).Select(i => new PhoneFile { Id = $"DCIM/Camera/IMG_{i}.jpg", Name = $"IMG_{i}.jpg", Size = 2000 }).ToList();
+            int reads = 0;
+            using (var phone = new GonePhone(new FolderPhoneSource(phoneDir), _ => { reads++; return true; }))
+            {
+                ScanJob.MarkDuplicates(phone, same, CancellationToken.None);
+                Assert.Equal(ScanJob.MaxHeadMisses, reads);
+            }
+        }
+
+        [Fact]
         public void Quelques_refus_isoles_ne_bloquent_pas_la_copie()
         {
             // Fantômes : entrées que le téléphone liste encore alors que le fichier n'existe plus.

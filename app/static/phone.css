@@ -999,6 +999,9 @@
 /* L'inventaire a échoué : plus d'animation, le message et « Réessayer ». */
 #panel-scan.scan-failed .scan-orbit, #panel-scan.scan-failed .scan-counters { display: none; }
 #scan-retry[hidden] { display: none; }
+/* Pourquoi Windows ne voit pas le téléphone : pour Louis, en petit sous le texte de l'étape. */
+.tel-problem { margin: 6px 0 0; max-width: 46ch; font-size: 0.82rem; font-weight: 600; color: var(--ink-soft); text-wrap: pretty; }
+.tel-problem[hidden] { display: none; }
 
 /* Fenêtre d'erreur : le message pour Yayo, le détail technique pour Louis. */
 .error-dialog {

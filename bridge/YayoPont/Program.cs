@@ -33,6 +33,9 @@ namespace YayoPont
             bool update = args.Contains("--maj");
             bool background = args.Contains("--background") || update;
 
+            // Un plantage sur un autre fil (appel au téléphone, copie) doit au moins laisser une trace.
+            AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error("plantage non géré", e.ExceptionObject as Exception ?? new Exception(e.ExceptionObject?.ToString()));
+
             try
             {
                 // GitHub (mise à jour) n'accepte que TLS 1.2 et plus.
