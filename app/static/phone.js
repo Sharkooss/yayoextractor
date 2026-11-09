@@ -19,7 +19,7 @@
   })();
   const API_REQUIRED = 2;
   // 1.0.x copiait les copies WhatsApp et les clips des photos animées : des doublons sur la clé.
-  const MIN_BRIDGE = "1.1.4";
+  const MIN_BRIDGE = "1.1.5";
   // Mise à jour automatique (pont 1.1.0+) : au-delà de ce délai, on propose de le faire à la main.
   const UPDATE_WAIT = 3 * 60e3;
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -294,7 +294,13 @@
     st.phone = d.phone;
     st.drives = d.drives || [];
 
+    if (st.phone && st.phone.state === "ready") st.phoneMisses = 0;
+    // Un seul sondage sans téléphone (il répond lentement) ne doit pas ramener à l'étape « branche-le » :
+    // il en faut quelques-uns de suite pour y croire.
+    else if (st.scan && (st.phoneMisses = (st.phoneMisses || 0) + 1) < 4) return;
+
     if (!st.phone || st.phone.state !== "ready") {
+      st.phoneMisses = 0;
       resetScan();
       showTelephone(d);
       setRail("cle", "", "Pas encore branchée");
@@ -320,6 +326,7 @@
     $("scene-key").classList.add("connected");
 
     const key = `n|${st.driveId}|${st.phone.name}`;
+    if (st.scanError) return; // échec affiché : on attend « Réessayer »
     if (!st.scan || st.scan.key !== key) {
       startScan({ driveId: st.driveId }, key);
       return;
@@ -430,6 +437,7 @@
 
   function resetScan() {
     st.scan = null;
+    st.scanError = false;
     st.scanRepair = null;
     st.scanBlocked = null;
     st.items = [];
@@ -460,6 +468,9 @@
   async function startScan(body, key) {
     st.scanning = true;
     resetScan();
+    $("panel-scan").classList.remove("scan-failed");
+    $("scan-title").textContent = "On fait l'inventaire…";
+    $("scan-retry").hidden = true;
     showPanel("scan");
     setRail("galerie", "active", "Inventaire en cours…");
     counters.photos = counters.videos = 0;
@@ -490,10 +501,19 @@
       await sleep(REDUCED ? 0 : 450); // laisse les compteurs finir leur course
       showGallery();
     } catch (err) {
-      $("scan-phase").textContent = err.message && err.kind === "http"
-        ? err.message + " On réessaie dans un instant…"
-        : "Le pont ne répond plus, on réessaie…";
-      await sleep(2500);
+      if (err.message && err.kind === "http") {
+        // Pas de nouvelle tentative automatique : elle relançait 5 minutes d'inventaire, en boucle,
+        // sans jamais montrer pourquoi. Le message reste affiché jusqu'à « Réessayer ».
+        st.scanError = true;
+        $("panel-scan").classList.add("scan-failed");
+        $("scan-title").textContent = "L'inventaire n'a pas abouti";
+        $("scan-phase").textContent = err.message;
+        $("scan-retry").hidden = false;
+        setRail("galerie", "", "Inventaire à relancer");
+      } else {
+        $("scan-phase").textContent = "Le pont ne répond plus, on réessaie…";
+        await sleep(2500);
+      }
     } finally {
       st.scanning = false;
       kick();
@@ -1119,6 +1139,11 @@
     if (copy.expert && expert) expert.onFinish(job);
     ($("end-eject").hidden ? $("end-open") : $("end-eject")).focus();
   }
+
+  $("scan-retry").addEventListener("click", () => {
+    st.scanError = false;
+    kick();
+  });
 
   $("xfer-cancel").addEventListener("click", async () => {
     if (!st.transfer) return;

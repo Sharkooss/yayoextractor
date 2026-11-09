@@ -109,13 +109,18 @@ namespace YayoPont
             if (currentScan != null && currentScan.State == "running") phones = lastPhones;
             else
             {
-                try { phones = phone.Phones(); }
+                try
+                {
+                    phones = phone.Phones();
+                    lastPhones = phones;
+                }
                 catch (Exception ex)
                 {
+                    // Un sondage raté (téléphone qui ne répond pas) ne veut pas dire « débranché » :
+                    // on garde le dernier état connu, sinon le site retombe à l'étape « branche ton téléphone ».
                     Log.Error("détection du téléphone", ex);
-                    phones = new List<PhoneInfo>();
+                    phones = lastPhones;
                 }
-                lastPhones = phones;
             }
             var wanted = req.QueryValue("phoneId") ?? selectedPhoneId;
             var chosen = phones.FirstOrDefault(p => p.Id == wanted) ?? phones.FirstOrDefault();

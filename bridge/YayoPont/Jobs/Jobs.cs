@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -36,7 +37,19 @@ namespace YayoPont.Jobs
 
         public string Id { get; } = Guid.NewGuid().ToString("N");
         public string State { get; private set; } = "running";
-        public string Phase { get; private set; } = "phone";
+        // Chaque changement de phase est daté dans le journal : sans lui, « ça charge 5 minutes » ne dit pas où.
+        private readonly Stopwatch clock = Stopwatch.StartNew();
+        private string phase = "phone";
+
+        public string Phase
+        {
+            get => phase;
+            private set
+            {
+                if (phase != value) Log.Info($"analyse : « {phase} » terminée, « {value} » commence ({clock.Elapsed.TotalSeconds:0} s, {Files.Count} fichiers)");
+                phase = value;
+            }
+        }
         public int Photos { get; private set; }
         public int Videos { get; private set; }
         public int OnDriveCount { get; private set; }
@@ -83,6 +96,7 @@ namespace YayoPont.Jobs
                     if (file.Hidden) Hidden++;
                 }, cancel);
                 foreach (var file in files) Files[file.Id] = file;
+                Log.Info($"analyse : {files.Count} fichiers listés sur le téléphone en {clock.Elapsed.TotalSeconds:0} s");
                 MarkLive(files);
                 Live = files.Count(f => f.Live);
                 ProbeReads(phone, files, cancel);
@@ -116,6 +130,7 @@ namespace YayoPont.Jobs
                 Videos = files.Count - Photos;
                 Hidden = files.Count(f => f.Hidden);
                 State = "done";
+                Log.Info($"analyse terminée en {clock.Elapsed.TotalSeconds:0} s : {Photos} photos, {Videos} vidéos, {OnDriveCount} déjà sur la clé");
             }
             catch (OperationCanceledException)
             {
@@ -124,7 +139,7 @@ namespace YayoPont.Jobs
             }
             catch (Exception ex)
             {
-                Log.Error("analyse", ex);
+                Log.Error($"analyse (phase « {Phase} », {clock.Elapsed.TotalSeconds:0} s)", ex);
                 State = "error";
                 Error = ex is IOException ? ex.Message : "L'analyse du téléphone a échoué.";
             }

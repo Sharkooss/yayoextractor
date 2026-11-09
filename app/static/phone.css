@@ -996,6 +996,9 @@
 }
 .gallery-blocked .icon { flex: none; width: 20px; height: 20px; margin-top: 1px; color: var(--danger); }
 .gallery-blocked[hidden] { display: none; }
+/* L'inventaire a échoué : plus d'animation, le message et « Réessayer ». */
+#panel-scan.scan-failed .scan-orbit, #panel-scan.scan-failed .scan-counters { display: none; }
+#scan-retry[hidden] { display: none; }
 .space-gauge[hidden] { display: none; }
 
 /* « On range ta clé… » : avant de copier, le flux s'arrête et la clé s'active. */

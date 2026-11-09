@@ -168,6 +168,7 @@ window.YayoPhoneExpert = (core) => {
       return;
     }
     const key = scanKey(target);
+    if (st.scanError) return; // échec affiché : on attend « Réessayer »
     if (!st.scan || st.scan.key !== key) {
       if (cfg.dest.type === "folder") addRecent(cfg.dest.path);
       $("xp-scan-note").textContent = "Analyse en cours…";
