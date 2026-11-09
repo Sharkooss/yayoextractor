@@ -142,8 +142,17 @@ Conception : `docs/superpowers/specs/2026-10-24-telephone-v2-design.md`.
   (`0x80070079`), puis le pont restait figé (la 1.1.2 rouvrait le téléphone à ce moment-là : retiré,
   rien ne prouvait son utilité). Maintenant : un fichier que le téléphone ne connaît plus est passé
   tout de suite (« n'est plus sur le téléphone », sans compter comme refus) ; chaque appel au
-  téléphone a 20 s, puis Windows est prié d'annuler et, sans réaction 10 s de plus, le thread WPD
-  bloqué est abandonné pour un neuf. Le délai compte comme un refus (code `0x80070079`).
+  téléphone a 20 s. **Retiré en 1.1.8** : l'annulation (`Cancel`) puis l'abandon du thread WPD qui
+  suivaient faisaient décrocher le téléphone (S20 FE de Yayo : il quittait l'USB, revenait 25 s plus
+  tard, l'inventaire repartait de zéro en boucle).
+- **1.1.8, S20 FE de Yayo : on n'annule plus, on n'attend plus** : un fichier fantôme (listé, mais
+  que le téléphone ne livre pas) bloque l'appel ~1 min côté Windows. Le pont ne l'annule ni ne
+  l'abandonne plus : l'appelant cesse d'attendre après 20 s *d'exécution* (délai compté depuis le
+  début de l'appel, pas depuis la mise en file) et l'appel suivant attend naturellement derrière.
+  La comparaison des doublons et l'analyse approfondie s'arrêtent au premier appel sans réponse
+  (les doublons non repérés sont copiés, le rangement les retire ensuite) ; l'essai de lecture ne
+  conclut pas à un refus sur un simple silence ; la copie passe le fichier et s'arrête après 3 de
+  suite. Le journal nomme le fichier qui ne répond pas (`wpd : pas de réponse pour …`).
 - **Mise à jour automatique** : au démarrage puis toutes les 12 h, le pont lit la dernière release
   GitHub, télécharge le nouvel exe (sans marque internet, donc sans SmartScreen) et se réinstalle
   avec `--maj`, sans ouvrir le site. Le site déclenche aussi `POST /update` quand il trouve un pont

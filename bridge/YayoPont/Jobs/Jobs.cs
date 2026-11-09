@@ -129,7 +129,13 @@ namespace YayoPont.Jobs
                 byte[] Head(PhoneFile f)
                 {
                     if (ReadBlocked || headMisses >= MaxHeadMisses) return null;
-                    var head = PhoneHead(phone, f.Id);
+                    byte[] head;
+                    try { head = PhoneHead(phone, f.Id); }
+                    catch (PhoneReadException)
+                    {
+                        headMisses = MaxHeadMisses; // le téléphone ne répond plus : on ne le lit plus pour comparer
+                        return null;
+                    }
                     headMisses = head == null ? headMisses + 1 : 0;
                     return head;
                 }
@@ -189,6 +195,11 @@ namespace YayoPont.Jobs
                             blocked = false;
                             break;
                         }
+                    }
+                    catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.TimeoutCode)
+                    {
+                        blocked = false; // pas de réponse : peut-être un fichier fantôme, rien ne prouve un refus
+                        break;
                     }
                     catch (PhoneReadException ex) { code = ex.HResult; }
                     catch (IOException) { blocked = false; } // fichier ou liaison : pas un refus du téléphone
@@ -282,7 +293,15 @@ namespace YayoPont.Jobs
                             Log.Info($"analyse : comparaison interrompue après {clock.Elapsed.TotalSeconds:0} s ({read} sur {total} fichiers lus, {misses} illisibles de suite)");
                             break;
                         }
-                        var head = PhoneHead(phone, file.Id);
+                        byte[] head;
+                        try { head = PhoneHead(phone, file.Id); }
+                        catch (PhoneReadException)
+                        {
+                            // Le téléphone ne répond plus : continuer ferait attendre à chaque fichier. Les doublons non repérés seront copiés.
+                            stopped = true;
+                            Log.Info($"analyse : comparaison interrompue, le téléphone ne répond plus ({read} sur {total} fichiers lus, après {clock.Elapsed.TotalSeconds:0} s)");
+                            break;
+                        }
                         onProgress?.Invoke(++read, total);
                         misses = head == null ? misses + 1 : 0;
                         if (head == null) continue;
@@ -331,6 +350,11 @@ namespace YayoPont.Jobs
                         }
                     }
                 }
+                catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.TimeoutCode)
+                {
+                    Log.Info("analyse approfondie interrompue : le téléphone ne répond plus (" + file.RelativePath + ")");
+                    return;
+                }
                 catch (IOException ex) when (!ex.Message.Contains("débranché"))
                 {
                     Log.Error("analyse approfondie de " + file.RelativePath, ex);
@@ -371,6 +395,7 @@ namespace YayoPont.Jobs
             {
                 using (var stream = phone.OpenRead(id)) return DuplicateIndex.ReadHead(stream);
             }
+            catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.TimeoutCode) { throw; } // le téléphone ne répond plus : l'appelant s'arrête
             catch (IOException) { return null; }
         }
     }
@@ -428,7 +453,10 @@ namespace YayoPont.Jobs
         private const int MaxRefusalsAtStart = 5;
         private const int MaxRefusalsInARow = 50;
 
+        private const int MaxNoAnswersInARow = 3;
+
         private int readRefusals;
+        private int noAnswers;
 
         private readonly CancellationTokenSource cancel = new CancellationTokenSource();
         private readonly object gate = new object();
@@ -550,6 +578,7 @@ namespace YayoPont.Jobs
                 {
                     var head = ReadUpTo(source, HeadBytes);
                     readRefusals = 0;
+                    noAnswers = 0;
                     var compareHead = head.Length <= DuplicateIndex.HeadSize ? head : head.Take(DuplicateIndex.HeadSize).ToArray();
                     if (options.Dedupe && index.IsOnDrive(file.Name, file.Size, () => compareHead, DuplicateIndex.ReadHead))
                     {
@@ -675,6 +704,21 @@ namespace YayoPont.Jobs
                 State = "error";
                 Error = "La clé a été retirée pendant la copie.";
                 return false;
+            }
+            catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.TimeoutCode)
+            {
+                // Un fichier que le téléphone ne livre pas (fantôme) : on passe au suivant ; plusieurs de suite, le téléphone est figé.
+                Log.Info("copie : pas de réponse pour " + file.RelativePath);
+                Fail(file, "Le téléphone ne répond pas pour ce fichier.");
+                Advance(file.Size - counted);
+                if (++noAnswers >= MaxNoAnswersInARow)
+                {
+                    Detail = $"{noAnswers} fichiers de suite sans réponse, dernier : {file.RelativePath} ; {Copied} copiés, {Skipped} déjà sur la clé";
+                    State = "error";
+                    Error = PhoneReadException.Advice(ex.HResult);
+                    return false;
+                }
+                return true;
             }
             catch (PhoneReadException ex)
             {

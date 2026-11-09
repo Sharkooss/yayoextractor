@@ -39,8 +39,11 @@ namespace YayoPont.Phone
             public DateTime? Date;
         }
 
-        /// <summary>Un appel au téléphone (ouvrir un fichier, lire un bloc) qui ne répond pas en 20 s est abandonné.</summary>
+        /// <summary>Un appel au téléphone (ouvrir un fichier, lire un bloc) qui dure plus de 20 s : on n'attend plus sa réponse.</summary>
         private const int CallTimeoutMs = 20000;
+
+        /// <summary>Attente maximale derrière un appel resté bloqué (Windows finit par rendre la main, en une minute environ).</summary>
+        private const int MaxQueueMs = 180000;
 
         /// <summary>L'inventaire est coupé si aucun objet du téléphone n'est lu pendant 90 s.</summary>
         private const int StallMs = 90000;
@@ -49,13 +52,12 @@ namespace YayoPont.Phone
 
         private void Progress() => Interlocked.Exchange(ref progressTicks, DateTime.UtcNow.Ticks);
 
-        // Remplacés ensemble si le thread WPD reste bloqué dans un appel du téléphone (voir OnNoAnswer).
-        private volatile BlockingCollection<Action> queue = new BlockingCollection<Action>();
+        private readonly BlockingCollection<Action> queue = new BlockingCollection<Action>();
         private volatile Thread worker;
         private readonly Dictionary<string, PhoneFile> known = new Dictionary<string, PhoneFile>();
 
         // Uniquement sur le thread WPD.
-        private Dictionary<string, Opened> opened = new Dictionary<string, Opened>(StringComparer.Ordinal);
+        private readonly Dictionary<string, Opened> opened = new Dictionary<string, Opened>(StringComparer.Ordinal);
         // Appareils WPD qui ne sont pas des téléphones (clés USB en « MSC ») : pas rouverts à chaque sondage.
         private readonly HashSet<string> notPhones = new HashSet<string>(StringComparer.Ordinal);
         private List<string> order = new List<string>();
@@ -85,11 +87,24 @@ namespace YayoPont.Phone
         public IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel) =>
             Run(() => EnumerateOnWorker(phoneId, found, cancel), 0, StallMs);
 
-        public Stream OpenRead(string id) => Run(() =>
+        public Stream OpenRead(string id)
         {
-            var stream = OpenResource(id, Wpd.ResourceDefault, out uint bufferSize, true);
-            return (Stream)new WpdStream(this, stream, bufferSize);
-        }, CallTimeoutMs);
+            try
+            {
+                return Run(() =>
+                {
+                    var stream = OpenResource(id, Wpd.ResourceDefault, out uint bufferSize, true);
+                    return (Stream)new WpdStream(this, stream, bufferSize);
+                }, CallTimeoutMs);
+            }
+            catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.TimeoutCode)
+            {
+                PhoneFile file;
+                lock (known) known.TryGetValue(id, out file);
+                Log.Info("wpd : pas de réponse pour " + (file?.RelativePath ?? id) + " (" + (file?.Size ?? 0) + " octets)");
+                throw;
+            }
+        }
 
         public byte[] Thumbnail(string id)
         {
@@ -549,67 +564,58 @@ namespace YayoPont.Phone
             if (comObject != null && Marshal.IsComObject(comObject)) Marshal.ReleaseComObject(comObject);
         }
 
-        /// <param name="timeoutMs">0 : on attend autant qu'il faut (inventaire) ; sinon l'appel est annulé puis abandonné.</param>
+        /// <param name="timeoutMs">
+        /// 0 : on attend autant qu'il faut. Sinon, délai compté depuis le DÉBUT de l'appel sur le thread WPD (pas depuis
+        /// la mise en file : derrière un appel bloqué, tous les suivants auraient expiré d'un coup). Passé ce délai on
+        /// cesse d'attendre, sans rien annuler : annuler (Cancel) ou abandonner le thread faisait décrocher le téléphone
+        /// (il disparaissait de l'USB puis revenait, sur l'S20 FE).
+        /// </param>
+        /// <param name="stallMs">Appel long qui avance (inventaire) : on n'abandonne que s'il n'avance plus depuis ce délai.</param>
         private T Run<T>(Func<T> work, int timeoutMs = 0, int stallMs = 0)
         {
             if (Thread.CurrentThread == worker) return work();
             T result = default;
             Exception error = null;
+            long startedTicks = 0;
             // Pas de « using » : après un délai dépassé, le thread WPD peut encore le signaler.
             var done = new ManualResetEventSlim();
             queue.Add(() =>
             {
+                Interlocked.Exchange(ref startedTicks, DateTime.UtcNow.Ticks);
                 try { result = work(); }
                 catch (Exception ex) { error = ex; }
                 finally { done.Set(); }
             });
-            if (timeoutMs <= 0 && stallMs > 0)
+            if (timeoutMs > 0)
             {
-                // Appel long mais qui avance (inventaire) : on ne coupe que s'il ne progresse plus depuis StallMs.
+                var queuedSince = DateTime.UtcNow;
+                while (!done.Wait(250))
+                {
+                    long started = Interlocked.Read(ref startedTicks);
+                    bool hung = started != 0 && (DateTime.UtcNow - new DateTime(started, DateTimeKind.Utc)).TotalMilliseconds > timeoutMs;
+                    bool waitedTooLong = (DateTime.UtcNow - queuedSince).TotalMilliseconds > MaxQueueMs;
+                    if (!hung && !waitedTooLong) continue;
+                    Log.Info(hung ? "wpd : un appel au téléphone dure depuis plus de " + timeoutMs / 1000 + " s, on n'attend plus"
+                        : "wpd : le thread du téléphone est occupé depuis plus de " + MaxQueueMs / 1000 + " s, on n'attend plus");
+                    throw PhoneReadException.NoAnswer();
+                }
+            }
+            else if (stallMs > 0)
+            {
                 Progress();
                 while (!done.Wait(5000))
                 {
                     var idle = DateTime.UtcNow - new DateTime(Interlocked.Read(ref progressTicks), DateTimeKind.Utc);
                     if (idle.TotalMilliseconds < stallMs) continue;
-                    Log.Info("wpd : l'inventaire n'avance plus depuis " + (int)idle.TotalSeconds + " s");
-                    OnNoAnswer(done);
+                    Log.Info("wpd : l'inventaire n'avance plus depuis " + (int)idle.TotalSeconds + " s, on n'attend plus");
                     throw PhoneReadException.NoAnswer();
                 }
             }
-            else if (timeoutMs <= 0) done.Wait();
-            else if (!done.Wait(timeoutMs))
-            {
-                OnNoAnswer(done);
-                throw PhoneReadException.NoAnswer();
-            }
+            else done.Wait();
             if (error is PhoneReadException || error is PhoneFileGoneException) ExceptionDispatchInfo.Capture(error).Throw(); // garde son type et son code
             if (error is COMException com && com.ErrorCode == ErrorNotConnected) throw new IOException("Le téléphone a été débranché.", com);
             if (error != null) throw new IOException(error.Message, error);
             return result;
-        }
-
-        /// <summary>
-        /// Le thread WPD est coincé dans un appel que le téléphone ne termine pas (sur l'A14, un fichier
-        /// disparu : plus d'une minute, puis tout restait figé). D'abord on demande à Windows d'annuler ;
-        /// si rien ne bouge, ce thread est abandonné et un neuf reprend, avec une liaison rouverte au besoin.
-        /// </summary>
-        private void OnNoAnswer(ManualResetEventSlim done)
-        {
-            Log.Info("wpd : appel sans réponse après " + CallTimeoutMs / 1000 + " s, annulation");
-            try
-            {
-                // Le thread WPD est bloqué : il ne touche pas à « opened » pendant ce temps.
-                if (currentId != null && opened.TryGetValue(currentId, out var o)) o.Device.Cancel();
-            }
-            catch (Exception ex) when (ex is COMException || ex is InvalidOperationException) { }
-            if (done.Wait(10000)) return;
-            Log.Info("wpd : thread bloqué abandonné, liaison au téléphone refaite");
-            var stuck = queue;
-            queue = new BlockingCollection<Action>();
-            opened = new Dictionary<string, Opened>(StringComparer.Ordinal);
-            currentId = null;
-            StartWorker();
-            stuck.CompleteAdding(); // si le thread bloqué finit un jour, il s'arrête
         }
     }
 

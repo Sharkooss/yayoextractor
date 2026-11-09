@@ -177,6 +177,84 @@ namespace YayoPont.Tests
             }
         }
 
+        /// <summary>Fichiers que le téléphone ne livre jamais (appel sans réponse), comme ceux de l'S20 FE.</summary>
+        private sealed class SilentPhone : IPhoneSource
+        {
+            private readonly IPhoneSource inner;
+            private readonly Func<string, bool> silent;
+            public int Opened;
+
+            public SilentPhone(IPhoneSource inner, Func<string, bool> silent)
+            {
+                this.inner = inner;
+                this.silent = silent;
+            }
+
+            public IList<PhoneInfo> Phones() => inner.Phones();
+            public IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel) => inner.Enumerate(phoneId, found, cancel);
+            public byte[] Thumbnail(string id) => inner.Thumbnail(id);
+            public bool UsbSeen() => inner.UsbSeen();
+            public void Dispose() => inner.Dispose();
+
+            public Stream OpenRead(string id)
+            {
+                Opened++;
+                if (silent(id)) throw PhoneReadException.NoAnswer();
+                return inner.OpenRead(id);
+            }
+        }
+
+        [Fact]
+        public void La_comparaison_s_arrete_au_premier_appel_sans_reponse()
+        {
+            var same = Enumerable.Range(0, 20).Select(i => new PhoneFile { Id = $"DCIM/Camera/IMG_{i}.jpg", Name = $"IMG_{i}.jpg", Size = 2000 }).ToList();
+            using (var phone = new SilentPhone(new FolderPhoneSource(phoneDir), _ => true))
+            {
+                ScanJob.MarkDuplicates(phone, same, CancellationToken.None);
+                Assert.Equal(1, phone.Opened);
+            }
+        }
+
+        [Fact]
+        public void Un_appel_sans_reponse_pendant_l_essai_de_lecture_ne_marque_rien_d_illisible()
+        {
+            using (var phone = new SilentPhone(new FolderPhoneSource(phoneDir), id => id.Contains("WhatsApp")))
+            {
+                var scan = new ScanJob();
+                scan.Run(phone, Drive(), CancellationToken.None);
+
+                Assert.False(scan.ReadBlocked);
+                Assert.Empty(scan.BlockedSources);
+                Assert.All(scan.Items, i => Assert.False(i.Unreadable));
+            }
+        }
+
+        [Fact]
+        public void La_copie_passe_un_fichier_sans_reponse_mais_s_arrete_apres_trois_de_suite()
+        {
+            var scan = new ScanJob();
+            scan.Run(new FolderPhoneSource(phoneDir), Drive(), CancellationToken.None);
+            var files = scan.Files.Values.Where(f => f.Source == "camera").OrderBy(f => f.Name).ToList();
+
+            using (var phone = new SilentPhone(new FolderPhoneSource(phoneDir), id => id.EndsWith("IMG_3.jpg")))
+            {
+                var job = new TransferJob();
+                job.Run(phone, Drive(), files, scan.Index);
+                Assert.Equal("done", job.State);
+                Assert.Single(job.Failed);
+                Assert.Equal(11, job.Copied);
+            }
+
+            using (var phone = new SilentPhone(new FolderPhoneSource(phoneDir), _ => true))
+            {
+                var job = new TransferJob();
+                job.Run(phone, Drive(), files, scan.Index);
+                Assert.Equal("error", job.State);
+                Assert.Equal(3, job.Failed.Count);
+                Assert.Equal(3, phone.Opened);
+            }
+        }
+
         [Fact]
         public void La_comparaison_des_doublons_s_arrete_au_bout_de_son_budget()
         {
