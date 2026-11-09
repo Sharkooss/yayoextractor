@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 
 namespace YayoPont
 {
@@ -17,6 +18,22 @@ namespace YayoPont
         public static void Info(string message) => Write("INFO", message);
 
         public static void Error(string message, Exception ex) => Write("ERREUR", message + " : " + ex);
+
+        /// <summary>Les dernières lignes du journal (le site les montre dans la fenêtre d'erreur).</summary>
+        public static string[] Tail(int count)
+        {
+            try
+            {
+                lock (Gate)
+                {
+                    if (!File.Exists(FilePath)) return new string[0];
+                    var lines = File.ReadAllLines(FilePath);
+                    return lines.Skip(Math.Max(0, lines.Length - count)).ToArray();
+                }
+            }
+            catch (IOException) { return new string[0]; }
+            catch (UnauthorizedAccessException) { return new string[0]; }
+        }
 
         private static void Write(string level, string message)
         {

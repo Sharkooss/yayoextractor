@@ -19,7 +19,7 @@
   })();
   const API_REQUIRED = 2;
   // 1.0.x copiait les copies WhatsApp et les clips des photos animées : des doublons sur la clé.
-  const MIN_BRIDGE = "1.1.5";
+  const MIN_BRIDGE = "1.1.6";
   // Mise à jour automatique (pont 1.1.0+) : au-delà de ce délai, on propose de le faire à la main.
   const UPDATE_WAIT = 3 * 60e3;
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -148,6 +148,37 @@
       clearTimeout(timer);
     }
   }
+
+  /** Fenêtre d'erreur : le message simple, puis le détail technique et les dernières lignes de pont.log. */
+  async function showError(title, message, detail) {
+    const dialog = $("error-dialog");
+    $("error-title").textContent = title;
+    $("error-text").textContent = message || "";
+    const head = [`Pont ${st.bridge ? st.bridge.version : "?"} · ${new Date().toLocaleString("fr-FR")}`, detail ? `Détail : ${detail}` : ""]
+      .filter(Boolean).join("\n");
+    $("error-detail").textContent = head;
+    if (!dialog.open) dialog.showModal();
+    try {
+      const { lines } = (await call("/log", { timeout: 4000 })) || {};
+      if (lines && lines.length) $("error-detail").textContent = `${head}\n\n--- pont.log (dernières lignes) ---\n${lines.join("\n")}`;
+    } catch { /* pont injoignable : le message suffit */ }
+  }
+
+  $("error-close").addEventListener("click", () => $("error-dialog").close());
+  $("error-copy").addEventListener("click", async () => {
+    const button = $("error-copy");
+    try {
+      await navigator.clipboard.writeText($("error-detail").textContent);
+      button.textContent = "Copié !";
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents($("error-detail"));
+      getSelection().removeAllRanges();
+      getSelection().addRange(range);
+      button.textContent = "Sélectionné : Ctrl+C";
+    }
+    setTimeout(() => { button.textContent = "Copier le détail"; }, 2500);
+  });
 
   const thumbUrl = (id) => `${BRIDGE}/thumb/${encodeURIComponent(id)}?t=${st.token}`;
   const mediaUrl = (id) => `${BRIDGE}/media/${encodeURIComponent(id)}?t=${st.token}`;
@@ -495,7 +526,10 @@
           st.scanBlocked = job.readError ? { all: !!job.readBlocked, text: job.readError } : null;
           break;
         }
-        if (job.state === "error") throw new BridgeError("http", job.error);
+        if (job.state === "error") {
+          st.scanDetail = job.detail || "";
+          throw new BridgeError("http", job.error);
+        }
         await sleep(400);
       }
       await sleep(REDUCED ? 0 : 450); // laisse les compteurs finir leur course
@@ -510,6 +544,8 @@
         $("scan-phase").textContent = err.message;
         $("scan-retry").hidden = false;
         setRail("galerie", "", "Inventaire à relancer");
+        showError("L'inventaire n'a pas abouti", err.message, st.scanDetail);
+        st.scanDetail = "";
       } else {
         $("scan-phase").textContent = "Le pont ne répond plus, on réessaie…";
         await sleep(2500);
@@ -1119,6 +1155,7 @@
       $("end-title").textContent = "La copie s'est arrêtée";
       $("end-sub").textContent = job.error || "Un problème est survenu.";
       $("end-icon").innerHTML = `<use href="#i-alert"/>`;
+      showError("La copie s'est arrêtée", job.error, job.detail);
     }
     if (job.state !== "error") $("end-icon").innerHTML = `<use href="#i-check"/>`;
     if (failed.length) {

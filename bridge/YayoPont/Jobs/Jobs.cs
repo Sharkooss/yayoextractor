@@ -60,6 +60,9 @@ namespace YayoPont.Jobs
         public int DetailsTotal { get; private set; }
         public string Error { get; private set; }
 
+        /// <summary>Le détail technique d'un échec (type d'exception, phase, durée), montré dans la fenêtre d'erreur du site.</summary>
+        public string Detail { get; private set; }
+
         /// <summary>Le téléphone refuse de livrer le contenu de tous ses fichiers : copier est inutile.</summary>
         public bool ReadBlocked { get; private set; }
 
@@ -140,6 +143,7 @@ namespace YayoPont.Jobs
             catch (Exception ex)
             {
                 Log.Error($"analyse (phase « {Phase} », {clock.Elapsed.TotalSeconds:0} s)", ex);
+                Detail = $"{ex.GetType().Name} (0x{ex.HResult:X8}) : {ex.Message} — phase « {Phase} », après {clock.Elapsed.TotalSeconds:0} s";
                 State = "error";
                 Error = ex is IOException ? ex.Message : "L'analyse du téléphone a échoué.";
             }
@@ -403,6 +407,10 @@ namespace YayoPont.Jobs
         public int Copied { get; private set; }
         public int Skipped { get; private set; }
         public string Error { get; private set; }
+
+        /// <summary>Le détail technique d'un échec, montré dans la fenêtre d'erreur du site.</summary>
+        public string Detail { get; private set; }
+
         public string Folder { get; private set; }
         public Dictionary<string, object> Current { get; private set; }
         public List<TransferFailure> Failed { get; } = new List<TransferFailure>();
@@ -483,6 +491,7 @@ namespace YayoPont.Jobs
             catch (Exception ex)
             {
                 Log.Error("transfert", ex);
+                Detail = $"{ex.GetType().Name} (0x{ex.HResult:X8}) : {ex.Message}";
                 State = "error";
                 Error = "Le transfert a échoué de façon inattendue.";
             }
@@ -613,6 +622,7 @@ namespace YayoPont.Jobs
             }
             catch (IOException ex) when (ex.Message.Contains("débranché"))
             {
+                Detail = $"{ex.Message} (fichier {file.RelativePath})";
                 State = "error";
                 Error = "Le téléphone a été débranché. Rebranche-le puis relance : ce qui est déjà copié ne sera pas recopié.";
                 return false;
@@ -638,6 +648,7 @@ namespace YayoPont.Jobs
                 readRefusals++;
                 if ((readRefusals >= MaxRefusalsAtStart && Copied + Skipped == 0) || readRefusals >= MaxRefusalsInARow)
                 {
+                    Detail = $"{readRefusals} refus de suite, dernier : {ex.Message} (fichier {file.RelativePath}) ; {Copied} copiés, {Skipped} déjà sur la clé";
                     State = "error";
                     Error = PhoneReadException.Advice(ex.HResult);
                     return false;

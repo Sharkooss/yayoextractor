@@ -999,6 +999,22 @@
 /* L'inventaire a échoué : plus d'animation, le message et « Réessayer ». */
 #panel-scan.scan-failed .scan-orbit, #panel-scan.scan-failed .scan-counters { display: none; }
 #scan-retry[hidden] { display: none; }
+
+/* Fenêtre d'erreur : le message pour Yayo, le détail technique pour Louis. */
+.error-dialog {
+  width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto;
+  padding: 22px 24px; border: 2px solid var(--danger); border-radius: 18px;
+  background: var(--card); color: var(--ink); box-shadow: var(--shadow-hover);
+}
+.error-dialog::backdrop { background: var(--overlay-bg); }
+.error-dialog h3 { margin: 0 0 8px; font-size: 1.25rem; color: var(--danger); }
+.error-dialog p { margin: 0 0 12px; font-weight: 700; text-wrap: pretty; }
+.error-dialog pre {
+  margin: 0 0 14px; padding: 10px 12px; max-height: 45vh; overflow: auto;
+  background: var(--field); border: 1px solid var(--line); border-radius: 10px;
+  font: 0.78rem/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+}
+.error-actions { display: flex; align-items: center; gap: 16px; }
 .space-gauge[hidden] { display: none; }
 
 /* « On range ta clé… » : avant de copier, le flux s'arrête et la clé s'active. */

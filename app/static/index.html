@@ -551,6 +551,15 @@
         <p class="stage-text" id="scan-phase">On regarde ce qu'il y a déjà sur la clé…</p>
         <button type="button" class="btn btn-primary" id="scan-retry" hidden>Réessayer</button>
       </div>
+      <dialog class="error-dialog" id="error-dialog" aria-labelledby="error-title">
+        <h3 id="error-title"></h3>
+        <p id="error-text"></p>
+        <pre id="error-detail" tabindex="0"></pre>
+        <div class="error-actions">
+          <button type="button" class="btn btn-primary" id="error-copy">Copier le détail</button>
+          <button type="button" class="btn-text" id="error-close">Fermer</button>
+        </div>
+      </dialog>
 
       <div class="stage-panel panel-gallery" id="panel-galerie" hidden>
         <div class="gallery-toolbar">

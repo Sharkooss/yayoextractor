@@ -86,6 +86,8 @@ namespace YayoPont
             if (refused != null) return refused;
 
             if (req.Method == "GET" && path == "/devices") return Devices(req);
+            if (req.Method == "GET" && path == "/log")
+                return HttpResponse.Json(new Dictionary<string, object> { ["lines"] = Log.Tail(80) });
             if (req.Method == "POST" && path == "/scan") return StartScan(req);
             if (req.Method == "GET" && path.StartsWith("/scan/")) return ScanStatus(path.Substring(6));
             if (req.Method == "GET" && path.StartsWith("/thumb/")) return Thumb(path.Substring(7));
@@ -184,6 +186,7 @@ namespace YayoPont
                 ["detailsTotal"] = job.DetailsTotal,
                 ["repair"] = job.Repair,
                 ["error"] = job.Error,
+                ["detail"] = job.Detail,
                 ["readBlocked"] = job.ReadBlocked,
                 ["blockedSources"] = job.BlockedSources,
                 ["readError"] = job.ReadError,
