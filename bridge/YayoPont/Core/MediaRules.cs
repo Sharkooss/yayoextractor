@@ -41,6 +41,10 @@ namespace YayoPont.Core
             return "other";
         }
 
+        /// <summary>Le chemin (relatif au stockage) passe par un dossier WhatsApp.</summary>
+        public static bool IsWhatsApp(string relativePath) =>
+            (relativePath ?? "").IndexOf("whatsapp", StringComparison.OrdinalIgnoreCase) >= 0;
+
         /// <summary>Fichier qui cache son dossier (et ses sous-dossiers) à la Galerie.</summary>
         public static bool IsNoMedia(string fileName) => string.Equals(fileName, ".nomedia", StringComparison.OrdinalIgnoreCase);
 

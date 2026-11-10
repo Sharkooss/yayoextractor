@@ -21,17 +21,15 @@ namespace YayoPont.Tests
         [Fact]
         public void Rend_les_dernieres_lignes_du_journal()
         {
-            for (int i = 1; i <= 5; i++) Log.Info("ligne " + i);
-            var tail = Log.Tail(2);
-            Assert.Equal(2, tail.Length);
-            Assert.EndsWith("ligne 4", tail[0]);
-            Assert.EndsWith("ligne 5", tail[1]);
-        }
-
-        [Fact]
-        public void Sans_journal_rend_une_liste_vide()
-        {
-            Assert.Empty(Log.Tail(10));
+            // Le chemin du journal est global : d'autres tests, en parallèle, peuvent y écrire aussi.
+            // On vérifie donc l'ordre et le plafond, pas l'exclusivité.
+            for (int i = 1; i <= 5; i++) Log.Info("tail-test ligne " + i);
+            var tail = Log.Tail(200);
+            var mine = tail.Where(l => l.Contains("tail-test ligne")).ToList();
+            Assert.Equal(5, mine.Count);
+            Assert.EndsWith("ligne 1", mine[0]);
+            Assert.EndsWith("ligne 5", mine[4]);
+            Assert.True(Log.Tail(2).Length <= 2);
         }
     }
 }

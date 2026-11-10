@@ -107,7 +107,8 @@ namespace YayoPont.Jobs
                     if (file.Hidden) Hidden++;
                 }, cancel);
                 foreach (var file in files) Files[file.Id] = file;
-                Log.Info($"analyse : {files.Count} fichiers listés sur le téléphone en {clock.Elapsed.TotalSeconds:0} s");
+                Log.Info($"analyse : {files.Count} fichiers listés sur le téléphone en {clock.Elapsed.TotalSeconds:0} s ("
+                    + string.Join(", ", files.GroupBy(f => f.Source ?? "other").Select(g => $"{g.Key} {g.Count()} dont {g.Count(f => f.Hidden)} masqués")) + ")");
                 MarkLive(files);
                 Live = files.Count(f => f.Live);
                 ProbeReads(phone, files, cancel);

@@ -80,8 +80,14 @@ namespace YayoPont.Phone
     /// </summary>
     internal static class GalleryRules
     {
-        public static bool FolderHidden(bool parentHidden, string relativePath, IEnumerable<string> fileNames) =>
-            parentHidden || MediaRules.HiddenFolder(relativePath) || fileNames.Any(MediaRules.IsNoMedia);
+        public static bool FolderHidden(bool parentHidden, string relativePath, IEnumerable<string> fileNames)
+        {
+            // WhatsApp : un « .nomedia » (réglage « Visibilité des médias » coupé) retire les photos reçues de la Galerie
+            // du téléphone, mais pas de WhatsApp, où Yayo les voit et les attend sur sa clé. Seul « Sent » (copies de ses
+            // envois) reste écarté.
+            if (MediaRules.IsWhatsApp(relativePath)) return MediaRules.HiddenFolder(relativePath);
+            return parentHidden || MediaRules.HiddenFolder(relativePath) || fileNames.Any(MediaRules.IsNoMedia);
+        }
     }
 
     /// <summary>Un appareil USB d'un fabricant de téléphones est branché (même en simple recharge).</summary>

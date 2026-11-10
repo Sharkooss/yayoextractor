@@ -61,6 +61,27 @@ namespace YayoPont.Tests
         }
 
         [Fact]
+        public void Les_photos_whatsapp_recues_restent_visibles_malgre_un_nomedia()
+        {
+            // « Visibilité des médias » coupée dans WhatsApp : des .nomedia partout, y compris plus haut.
+            Write("Android/media/com.whatsapp/WhatsApp/Media/.nomedia");
+            Write("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/IMG-1.jpg");
+            Write("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/.nomedia");
+            Write("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/Private/IMG-2.jpg");
+            Write("Android/media/com.whatsapp/WhatsApp/Media/WhatsApp Images/Sent/IMG-3.jpg");
+            Write("Pictures/Autre/a.jpg");
+            Write("Pictures/Autre/.nomedia"); // hors WhatsApp, la règle de la Galerie reste
+            using (var source = new FolderPhoneSource(Path.Combine(root, "tel1")))
+            {
+                var files = source.Enumerate(_ => { }, CancellationToken.None).ToDictionary(f => f.Name);
+                Assert.False(files["IMG-1.jpg"].Hidden);
+                Assert.False(files["IMG-2.jpg"].Hidden);
+                Assert.True(files["IMG-3.jpg"].Hidden);
+                Assert.True(files["a.jpg"].Hidden);
+            }
+        }
+
+        [Fact]
         public void Plusieurs_telephones_simules()
         {
             Write("DCIM/Camera/A.jpg");

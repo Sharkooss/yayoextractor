@@ -153,6 +153,12 @@ Conception : `docs/superpowers/specs/2026-10-24-telephone-v2-design.md`.
   (les doublons non repérés sont copiés, le rangement les retire ensuite) ; l'essai de lecture ne
   conclut pas à un refus sur un simple silence ; la copie passe le fichier et s'arrête après 3 de
   suite. Le journal nomme le fichier qui ne répond pas (`wpd : pas de réponse pour …`).
+- **1.1.9, photos WhatsApp reçues de nouveau copiées** : sur le S20 FE de Yayo, le site ne montrait
+  que 37 photos « Appareil photo » alors que 813 fichiers étaient listés. Un `.nomedia` dans les
+  dossiers WhatsApp (réglage « Visibilité des médias » coupé) les faisait traiter comme « cachées de
+  la Galerie » et écarter. Pour tout chemin WhatsApp, `.nomedia` (et celui des dossiers parents) est
+  maintenant ignoré : seul `Sent` (copies des envois) reste écarté. Le journal détaille l'inventaire
+  par provenance (`whatsapp 700 dont 0 masqués…`).
 - **Mise à jour automatique** : au démarrage puis toutes les 12 h, le pont lit la dernière release
   GitHub, télécharge le nouvel exe (sans marque internet, donc sans SmartScreen) et se réinstalle
   avec `--maj`, sans ouvrir le site. Le site déclenche aussi `POST /update` quand il trouve un pont
