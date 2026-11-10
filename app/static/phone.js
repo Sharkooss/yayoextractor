@@ -19,7 +19,7 @@
   })();
   const API_REQUIRED = 2;
   // 1.0.x copiait les copies WhatsApp et les clips des photos animées : des doublons sur la clé.
-  const MIN_BRIDGE = "1.1.9";
+  const MIN_BRIDGE = "1.1.10";
   // Mise à jour automatique (pont 1.1.0+) : au-delà de ce délai, on propose de le faire à la main.
   const UPDATE_WAIT = 3 * 60e3;
   const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;

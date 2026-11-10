@@ -40,6 +40,14 @@ namespace YayoPont.Phone
 
         public const int TimeoutCode = unchecked((int)0x80070079); // ERROR_SEM_TIMEOUT, aussi renvoyé par WPD lui-même
 
+        /// <summary>ERROR_BUSY : le téléphone n'a pas fini une lecture précédente (flux non relâché, autre programme).</summary>
+        public const int BusyCode = unchecked((int)0x800700AA);
+
+        public static string BusyAdvice(int copied) =>
+            "Le téléphone reste occupé (code 0x800700AA) : une lecture précédente ne se termine pas. Ferme l'Explorateur de fichiers, "
+            + "Smart Switch et « Lien avec Windows » s'ils sont ouverts, débranche puis rebranche le câble, déverrouille l'écran et relance. "
+            + (copied > 0 ? $"Les {copied} fichiers déjà copiés ne seront pas recopiés." : "");
+
         public static PhoneReadException Refused(int code) =>
             new PhoneReadException($"Le téléphone ne donne pas ce fichier (code 0x{code:X8}).", code);
 

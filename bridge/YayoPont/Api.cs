@@ -199,8 +199,15 @@ namespace YayoPont
             return HttpResponse.Json(body);
         }
 
+        /// <summary>
+        /// Pendant une analyse ou une copie, le téléphone ne sert qu'à elles : une vignette ou un aperçu ouvrirait une
+        /// deuxième lecture en plein milieu, et le téléphone répondrait « occupé » (0x800700AA) aux fichiers suivants.
+        /// </summary>
+        private bool PhoneReservedForJob => currentTransfer?.State == "running" || currentScan?.State == "running";
+
         private HttpResponse Thumb(string id)
         {
+            if (PhoneReservedForJob) return HttpResponse.Error(503, "Le téléphone est occupé par la copie.");
             try
             {
                 var jpeg = phone.Thumbnail(id);
@@ -214,6 +221,7 @@ namespace YayoPont
 
         private HttpResponse Media(string id)
         {
+            if (PhoneReservedForJob) return HttpResponse.Error(503, "Le téléphone est occupé par la copie.");
             try
             {
                 // Les identifiants WPD n'ont pas d'extension : le type vient du nom du fichier.

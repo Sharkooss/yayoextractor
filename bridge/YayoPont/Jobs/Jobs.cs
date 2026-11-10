@@ -197,9 +197,9 @@ namespace YayoPont.Jobs
                             break;
                         }
                     }
-                    catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.TimeoutCode)
+                    catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.TimeoutCode || ex.HResult == PhoneReadException.BusyCode)
                     {
-                        blocked = false; // pas de réponse : peut-être un fichier fantôme, rien ne prouve un refus
+                        blocked = false; // pas de réponse ou occupé : peut-être un fichier fantôme, rien ne prouve un refus
                         break;
                     }
                     catch (PhoneReadException ex) { code = ex.HResult; }
@@ -456,8 +456,11 @@ namespace YayoPont.Jobs
 
         private const int MaxNoAnswersInARow = 3;
 
+        private const int MaxBusyInARow = 3;
+
         private int readRefusals;
         private int noAnswers;
+        private int busyInARow;
 
         private readonly CancellationTokenSource cancel = new CancellationTokenSource();
         private readonly object gate = new object();
@@ -580,6 +583,7 @@ namespace YayoPont.Jobs
                     var head = ReadUpTo(source, HeadBytes);
                     readRefusals = 0;
                     noAnswers = 0;
+                    busyInARow = 0;
                     var compareHead = head.Length <= DuplicateIndex.HeadSize ? head : head.Take(DuplicateIndex.HeadSize).ToArray();
                     if (options.Dedupe && index.IsOnDrive(file.Name, file.Size, () => compareHead, DuplicateIndex.ReadHead))
                     {
@@ -705,6 +709,22 @@ namespace YayoPont.Jobs
                 State = "error";
                 Error = "La clé a été retirée pendant la copie.";
                 return false;
+            }
+            catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.BusyCode)
+            {
+                // Déjà retenté plusieurs fois côté pont. Ce n'est pas un refus du fichier : le téléphone n'a pas fini une lecture
+                // précédente. Quelques-uns de suite et on s'arrête avec la marche à suivre, au lieu de 50 échecs identiques.
+                Log.Info("copie : téléphone occupé pour " + file.RelativePath);
+                Fail(file, "Le téléphone est occupé.");
+                Advance(file.Size - counted);
+                if (++busyInARow >= MaxBusyInARow)
+                {
+                    Detail = $"{busyInARow} fichiers de suite avec « appareil occupé » (0x800700AA), dernier : {file.RelativePath} ; {Copied} copiés, {Skipped} déjà sur la clé";
+                    State = "error";
+                    Error = PhoneReadException.BusyAdvice(Copied);
+                    return false;
+                }
+                return true;
             }
             catch (PhoneReadException ex) when (ex.HResult == PhoneReadException.TimeoutCode)
             {

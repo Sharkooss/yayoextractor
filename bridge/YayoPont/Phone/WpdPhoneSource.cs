@@ -45,6 +45,15 @@ namespace YayoPont.Phone
         /// <summary>Attente maximale derrière un appel resté bloqué (Windows finit par rendre la main, en une minute environ).</summary>
         private const int MaxQueueMs = 180000;
 
+        private const int BusyRetries = 4;
+
+        // Flux de lecture ouverts et pas encore relâchés (diagnostic de « occupé »).
+        private int openStreams;
+
+        internal void StreamOpened() => Interlocked.Increment(ref openStreams);
+
+        internal void StreamClosed() => Interlocked.Decrement(ref openStreams);
+
         /// <summary>L'inventaire est coupé si aucun objet du téléphone n'est lu pendant 90 s.</summary>
         private const int StallMs = 90000;
 
@@ -94,6 +103,7 @@ namespace YayoPont.Phone
                 return Run(() =>
                 {
                     var stream = OpenResource(id, Wpd.ResourceDefault, out uint bufferSize, true);
+                    StreamOpened();
                     return (Stream)new WpdStream(this, stream, bufferSize);
                 }, CallTimeoutMs);
             }
@@ -379,6 +389,13 @@ namespace YayoPont.Phone
             if (device == null) throw new IOException("Aucun téléphone branché.");
             if (strict && !StillThere(device, id)) throw new PhoneFileGoneException();
             int hr = GetStream(device, id, resource, out bufferSize, out var stream);
+            // « Occupé » : une lecture précédente n'est pas finie côté téléphone ; elle se termine d'elle-même ou à la libération du flux.
+            for (int attempt = 1; strict && hr == PhoneReadException.BusyCode && attempt <= BusyRetries; attempt++)
+            {
+                if (attempt == 1) Log.Info("wpd : appareil occupé (0x800700AA), " + Volatile.Read(ref openStreams) + " flux ouverts, pour " + id);
+                Thread.Sleep(300 * attempt);
+                hr = GetStream(device, id, resource, out bufferSize, out stream);
+            }
             if (hr == ErrorNotConnected) throw new IOException("Le téléphone a été débranché.");
             if (hr >= 0) return stream;
             if (!strict) return null;
@@ -577,6 +594,9 @@ namespace YayoPont.Phone
             T result = default;
             Exception error = null;
             long startedTicks = 0;
+            // 0 en cours, 1 terminé, 2 abandonné par l'appelant. Un appel abandonné qui finit quand même ne doit pas
+            // laisser son flux ouvert : le téléphone resterait « occupé » (0x800700AA) pour tous les fichiers suivants.
+            int state = 0;
             // Pas de « using » : après un délai dépassé, le thread WPD peut encore le signaler.
             var done = new ManualResetEventSlim();
             queue.Add(() =>
@@ -584,7 +604,14 @@ namespace YayoPont.Phone
                 Interlocked.Exchange(ref startedTicks, DateTime.UtcNow.Ticks);
                 try { result = work(); }
                 catch (Exception ex) { error = ex; }
-                finally { done.Set(); }
+                finally
+                {
+                    if (Interlocked.CompareExchange(ref state, 1, 0) == 2 && result is IDisposable orphan)
+                    {
+                        try { orphan.Dispose(); } catch (Exception) { }
+                    }
+                    done.Set();
+                }
             });
             if (timeoutMs > 0)
             {
@@ -595,6 +622,7 @@ namespace YayoPont.Phone
                     bool hung = started != 0 && (DateTime.UtcNow - new DateTime(started, DateTimeKind.Utc)).TotalMilliseconds > timeoutMs;
                     bool waitedTooLong = (DateTime.UtcNow - queuedSince).TotalMilliseconds > MaxQueueMs;
                     if (!hung && !waitedTooLong) continue;
+                    if (Interlocked.CompareExchange(ref state, 2, 0) != 0) break; // fini entre-temps : on prend son résultat
                     Log.Info(hung ? "wpd : un appel au téléphone dure depuis plus de " + timeoutMs / 1000 + " s, on n'attend plus"
                         : "wpd : le thread du téléphone est occupé depuis plus de " + MaxQueueMs / 1000 + " s, on n'attend plus");
                     throw PhoneReadException.NoAnswer();
@@ -607,6 +635,7 @@ namespace YayoPont.Phone
                 {
                     var idle = DateTime.UtcNow - new DateTime(Interlocked.Read(ref progressTicks), DateTimeKind.Utc);
                     if (idle.TotalMilliseconds < stallMs) continue;
+                    if (Interlocked.CompareExchange(ref state, 2, 0) != 0) break;
                     Log.Info("wpd : l'inventaire n'avance plus depuis " + (int)idle.TotalSeconds + " s, on n'attend plus");
                     throw PhoneReadException.NoAnswer();
                 }
@@ -656,6 +685,7 @@ namespace YayoPont.Phone
                 // Un Release qui ne répond pas ne doit pas faire échouer la copie du fichier.
                 try { owner.ReleaseOnWorker(stream); }
                 catch (IOException) { }
+                owner.StreamClosed();
             }
             disposed = true;
             base.Dispose(disposing);

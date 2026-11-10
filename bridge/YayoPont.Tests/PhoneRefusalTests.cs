@@ -204,6 +204,73 @@ namespace YayoPont.Tests
             }
         }
 
+        /// <summary>Téléphone « occupé » (0x800700AA) pour certains fichiers : une lecture précédente n'est pas finie.</summary>
+        private sealed class BusyPhone : IPhoneSource
+        {
+            private readonly IPhoneSource inner;
+            private readonly Func<string, bool> busy;
+            public int Opened;
+
+            public BusyPhone(IPhoneSource inner, Func<string, bool> busy)
+            {
+                this.inner = inner;
+                this.busy = busy;
+            }
+
+            public IList<PhoneInfo> Phones() => inner.Phones();
+            public IList<PhoneFile> Enumerate(string phoneId, Action<PhoneFile> found, CancellationToken cancel) => inner.Enumerate(phoneId, found, cancel);
+            public byte[] Thumbnail(string id) => inner.Thumbnail(id);
+            public bool UsbSeen() => inner.UsbSeen();
+            public void Dispose() => inner.Dispose();
+
+            public Stream OpenRead(string id)
+            {
+                Opened++;
+                if (busy(id)) throw PhoneReadException.Refused(PhoneReadException.BusyCode);
+                return inner.OpenRead(id);
+            }
+        }
+
+        [Fact]
+        public void La_copie_s_arrete_apres_trois_occupes_de_suite_avec_la_marche_a_suivre()
+        {
+            var scan = new ScanJob();
+            scan.Run(new FolderPhoneSource(phoneDir), Drive(), CancellationToken.None);
+            var files = scan.Files.Values.Where(f => f.Source == "camera").OrderBy(f => f.Name).ToList();
+
+            // Les quatre premiers passent, puis le téléphone reste occupé.
+            var done = new HashSet<string>(files.Take(4).Select(f => f.Id));
+            using (var phone = new BusyPhone(new FolderPhoneSource(phoneDir), id => !done.Contains(id)))
+            {
+                var job = new TransferJob();
+                job.Run(phone, Drive(), files, scan.Index);
+                Assert.Equal("error", job.State);
+                Assert.Equal(4, job.Copied);
+                Assert.Equal(3, job.Failed.Count);
+                Assert.Contains("0x800700AA", job.Error);
+                Assert.Contains("4 fichiers déjà copiés", job.Error);
+                Assert.Contains("occupé", job.Detail);
+            }
+        }
+
+        [Fact]
+        public void Un_occupe_isole_ne_bloque_pas_la_copie_et_ne_marque_rien_d_illisible()
+        {
+            using (var phone = new BusyPhone(new FolderPhoneSource(phoneDir), id => id.EndsWith("IMG_5.jpg") || id.Contains("WhatsApp")))
+            {
+                var scan = new ScanJob();
+                scan.Run(phone, Drive(), CancellationToken.None);
+                Assert.False(scan.ReadBlocked);
+                Assert.All(scan.Items, i => Assert.False(i.Unreadable));
+
+                var job = new TransferJob();
+                job.Run(phone, Drive(), scan.Files.Values.Where(f => f.Source == "camera").ToList(), scan.Index);
+                Assert.Equal("done", job.State);
+                Assert.Single(job.Failed);
+                Assert.Equal(11, job.Copied);
+            }
+        }
+
         [Fact]
         public void La_comparaison_s_arrete_au_premier_appel_sans_reponse()
         {

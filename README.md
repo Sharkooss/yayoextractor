@@ -159,6 +159,16 @@ Conception : `docs/superpowers/specs/2026-10-24-telephone-v2-design.md`.
   la Galerie » et écarter. Pour tout chemin WhatsApp, `.nomedia` (et celui des dossiers parents) est
   maintenant ignoré : seul `Sent` (copies des envois) reste écarté. Le journal détaille l'inventaire
   par provenance (`whatsapp 700 dont 0 masqués…`).
+- **1.1.10, « appareil occupé » (`0x800700AA`) en pleine copie** : sur le S20 FE de Yayo, 159 fichiers
+  étaient copiés puis tous les suivants échouaient. Windows (WPD) renvoie ce code tant qu'une lecture
+  précédente n'est pas terminée côté téléphone, c'est-à-dire tant qu'un flux n'est pas relâché. Trois
+  causes possibles corrigées : un appel que l'appelant a cessé d'attendre pouvait finir plus tard et
+  laisser son flux ouvert (il est maintenant libéré d'office) ; une vignette ou un aperçu demandé par
+  le site pendant une analyse ou une copie ouvrait une deuxième lecture (ces routes répondent 503 tant
+  qu'un travail tourne) ; et « occupé » est maintenant retenté 4 fois (0,3 s puis plus long) avant
+  d'échouer. Trois « occupé » de suite arrêtent la copie avec la marche à suivre (et le nombre de
+  fichiers déjà copiés) au lieu de 50 échecs identiques. Le journal note le nombre de flux ouverts au
+  premier « occupé » (`wpd : appareil occupé (0x800700AA), N flux ouverts, pour …`).
 - **Mise à jour automatique** : au démarrage puis toutes les 12 h, le pont lit la dernière release
   GitHub, télécharge le nouvel exe (sans marque internet, donc sans SmartScreen) et se réinstalle
   avec `--maj`, sans ouvrir le site. Le site déclenche aussi `POST /update` quand il trouve un pont
